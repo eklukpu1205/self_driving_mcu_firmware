@@ -16,7 +16,10 @@ int main() {
     
     // Initialize all hardware peripherals and software states
     comms_spi_init();
-    actuator_init_pwm();
+    actuator_hal_init();
+
+    sleep_ms(3000);
+
     sensors_init();
     control_pid_init(); 
 
