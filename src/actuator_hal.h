@@ -18,13 +18,13 @@
 #define PULSE_SAFE_LEFT_US 1214
 #define PULSE_SAFE_RIGHT_US 1786
 
-// Motor ESC Limits 
-#define MOTOR_PULSE_MIN_US 1000
-#define MOTOR_PULSE_MAX_US 2000
+
 
 
 
 void actuator_hal_init(void);
+
+void i2c_comm_setup(void);
 
 void actuator_hal_set_steering_rad(float angle_rad);
 

@@ -37,7 +37,7 @@ int main() {
 
         // Safety check and pass Jetson's target speed and radar distance through safety_arbitrate_speed()
 
-        // Calculate motor effort via control_calculate_effort(), then set motor and steering
+        // Set motor and steering
 
         // Update outgoing_cmd with the actual speed and steering for the next SPI cycle
 
