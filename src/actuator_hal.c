@@ -6,6 +6,11 @@
 // Pin Definitions 
 #define PIN_SERVO_PWM 14
 
+#define MOTOR_I2C_SDA_PIN 4
+#define MOTOR_I2C_SCL_PIN 5
+#define HI_WONDER_I2C_ADDR // The motor driver module address
+
+
 
 // PWM Timing Calculations (50 Hz)
 #define PWM_CLK_DIV 133.0f
@@ -92,6 +97,7 @@ void actuator_hal_emergency_halt(void) {
     set_raw_pulse(PIN_SERVO_PWM, PULSE_NEUTRAL_US);
 
     // Add control signal to set the motor speed to neutral
+    actuator_hal_set_throttle_effort(0);
    
 
 }
@@ -99,5 +105,12 @@ void actuator_hal_emergency_halt(void) {
 void i2c_comm_setup(void) {
 
     //Initializes the I2C communication
+    i2c_init(i2c0, 100000);
+
+    gpio_set_function(MOTOR_I2C_SCL_PIN, GPIO_FUNC_I2C);
+    gpio_set_function(MOTOR_I2C_SDA_PIN, GPIO_FUNC_I2C);
+
+    gpio_pull_up(MOTOR_I2C_SCL_PIN);
+    gpio_pull_up(MOTOR_I2C_SDA_PIN);
 
 }
