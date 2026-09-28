@@ -27,13 +27,16 @@ int main() {
     NvidiaCommand incoming_cmd = {0};
     McuCommand outgoing_cmd = {0}; 
 
+    EncoderFeedback wheel_feedback; // Raw counts and interval results for bench inspection.
     while (1) {
         // Mark the start time of the loop
         uint64_t loop_start = time_us_64();
 
         // Check if SPI is readable, then call comms_spi_exchange()
 
-        // Read local hardware sensors, and get radar distance and actual wheel speed
+        // Read board-processed encoder totals. First/recovery reads establish a
+        // baseline; future consumers must check the return value before using deltas.
+        sensors_update(&wheel_feedback);
 
         // Safety check and pass Jetson's target speed and radar distance through safety_arbitrate_speed()
 
@@ -42,7 +45,7 @@ int main() {
         // Update outgoing_cmd with the actual speed and steering for the next SPI cycle
 
         // Sleep until loop cycle has passed
-        sleep_until(loop_start + LOOP_PERIOD_US); 
+        sleep_until(from_us_since_boot(loop_start + LOOP_PERIOD_US));
     }
     return 0;
 }
