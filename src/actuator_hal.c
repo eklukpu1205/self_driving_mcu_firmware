@@ -8,7 +8,8 @@
 
 #define MOTOR_I2C_SDA_PIN 4
 #define MOTOR_I2C_SCL_PIN 5
-#define HI_WONDER_I2C_ADDR // The motor driver module address
+#define HI_WONDER_I2C_ADDR 0x34 // The motor driver module address
+#define MOTOR_PWM_ADDR 0x1F
 
 
 
@@ -88,6 +89,21 @@ void actuator_hal_set_steering_rad(float angle_rad) {
 void actuator_hal_set_throttle_effort(float throttle_percent) {
     
     // Utilize I2C to adjust the motor speed
+    if (throttle_percent < -100.0f){
+        throttle_percent = -100.0f;
+    }
+    if (throttle_percent > 100.0f) {
+        throttle_percent = 100.0f;
+    }
+
+
+    int8_t pwm_val = (int8_t) throttle_percent;
+
+    uint8_t motor_data[2];
+    motor_data[0] = MOTOR_PWM_ADDR;
+    motor_data[1] = (uint8_t) pwm_val;
+
+    i2c_write_blocking(i2c0, HI_WONDER_I2C_ADDR, motor_data, 2, false);
 
 }
 
