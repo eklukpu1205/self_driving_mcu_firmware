@@ -39,17 +39,33 @@ int main() {
 
     EncoderFeedback wheel_feedback; // Raw counts and interval results for bench inspection.
 
+    incoming_cmd.target_speed = 0;
+    incoming_cmd.target_steering = 0;
+    incoming_cmd.emergency_brake = false;
+    
+
+    float steering_range[10] = {0, 0.15, 0.3, 0.45, 0.3, 0.15, 0, -0.15, -0.3, -0.45};
+
+    int steering_index = 0;
 
 
     // TEST LOOP
 
     while (1) {
         
-        incoming_cmd.target_speed = 0;
-        incoming_cmd.target_steering = PULSE_NEUTRAL_US;
-        incoming_cmd.emergency_brake = false;
+        if (incoming_cmd.target_speed <= 100){
+            incoming_cmd.target_speed += 10;
+        } else {
+            incoming_cmd.target_speed = 10;
+        }
+
         incoming_cmd.timestamp_us = time_us_64();
         
+
+        incoming_cmd.target_steering = steering_range[steering_index];
+        steering_index = (steering_index + 1) % 10; 
+
+       
 
         uint64_t loop_start = time_us_64();
 
@@ -83,8 +99,27 @@ int main() {
         outgoing_cmd.emergency_brake = !system_safe;
         outgoing_cmd.timestamp_us = time_us_64();
 
+
+        // Test Status Update
+        printf("TEST VEHICLE COMMANDS\n");
+        printf("Current steering command %.3f", incoming_cmd.target_steering);
+        printf("Current speed command %.3f", incoming_cmd.target_speed);
+
+
+        printf("\n\nACTUAL VEHICLE VALUES\n");
+        printf("Actual speed data %.3f", incoming_cmd.target_speed);
+        
+
+
+
+
+
+
+
+
         // Sleep until loop cycle has passed
         sleep_until(from_us_since_boot(loop_start + LOOP_PERIOD_US));
+
     }
     return 0;
 }
