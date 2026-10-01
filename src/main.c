@@ -52,8 +52,8 @@ int main() {
 
         // Set motor and steering
         if (system_safe && !incoming_cmd.emergency_brake) {
-            actuator_set_speed(incoming_cmd.target_speed);
-            actuator_set_steering(incoming_cmd.target_steering);
+            actuator_hal_set_throttle_effort(incoming_cmd.target_speed);
+            actuator_hal_set_steering_rad(incoming_cmd.target_steering);
         } else {
             actuator_hal_emergency_halt(); 
         }
