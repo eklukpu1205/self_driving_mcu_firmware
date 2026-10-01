@@ -38,8 +38,19 @@ int main() {
     McuCommand outgoing_cmd = {0}; 
 
     EncoderFeedback wheel_feedback; // Raw counts and interval results for bench inspection.
+
+
+
+    // TEST LOOP
+
     while (1) {
-        // Mark the start time of the loop
+        
+        incoming_cmd.target_speed = 0;
+        incoming_cmd.target_steering = PULSE_NEUTRAL_US;
+        incoming_cmd.emergency_brake = false;
+        incoming_cmd.timestamp_us = time_us_64();
+        
+
         uint64_t loop_start = time_us_64();
 
         // Check if SPI is readable, then call comms_spi_exchange()
@@ -52,8 +63,8 @@ int main() {
 
         // Set motor and steering
         if (system_safe && !incoming_cmd.emergency_brake) {
-            actuator_set_speed(incoming_cmd.target_speed);
-            actuator_set_steering(incoming_cmd.target_steering);
+            actuator_hal_set_throttle_effort(incoming_cmd.target_speed);
+            actuator_hal_set_steering_rad(incoming_cmd.target_steering);
         } else {
             actuator_hal_emergency_halt(); 
         }
