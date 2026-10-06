@@ -72,8 +72,8 @@ void actuator_hal_set_steering_rad(float angle_rad) {
     }
 
     // Map radians to pulse width 
-    float normalized = angle_rad / STEERING_MAX_RAD; 
-    uint16_t pulse_us = (uint16_t) (PULSE_NEUTRAL_US + (normalized * (PULSE_SAFE_RIGHT_US - PULSE_NEUTRAL_US)));
+    float normalized = (angle_rad - STEERING_MIN_RAD) / (STEERING_MAX_RAD - STEERING_MIN_RAD); 
+    uint16_t pulse_us = (uint16_t) (PULSE_SAFE_LEFT_US + (normalized * (PULSE_SAFE_RIGHT_US - PULSE_LEFT_US)));
     
     // Clamp control signal
     if (pulse_us < PULSE_SAFE_LEFT_US){
