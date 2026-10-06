@@ -43,8 +43,8 @@ int main() {
     incoming_cmd.target_steering = 0;
     incoming_cmd.emergency_brake = false;
     
-
-    float steering_range[10] = {0, 0.15, 0.3, 0.45, 0.3, 0.15, 0, -0.15, -0.3, -0.45};
+//Update
+    float steering_range[7] = {0, 0.5, 1, 1.5, 2, 2.5, 3};
 
     int steering_index = 0;
 
@@ -63,7 +63,7 @@ int main() {
         
 
         incoming_cmd.target_steering = steering_range[steering_index];
-        steering_index = (steering_index + 1) % 10; 
+        steering_index = (steering_index + 1) % 7; 
 
        
 
