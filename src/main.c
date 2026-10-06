@@ -44,7 +44,7 @@ int main() {
     incoming_cmd.emergency_brake = false;
     
 //Update
-    float steering_range[7] = {0, 0.5, 1, 1.5, 2, 2.5, 3};
+    float steering_range[7] = {0.1, 0.5, 1, 1.5, 2, 2.5, 3};
 
     int steering_index = 0;
 
