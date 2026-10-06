@@ -29,7 +29,7 @@ int main() {
     sleep_ms(3000);
 
     sensors_init();
-    control_pid_init(); 
+    
 
     EncoderFeedback WheelFeedback;
 
@@ -123,3 +123,6 @@ int main() {
     }
     return 0;
 }
+
+
+main();
