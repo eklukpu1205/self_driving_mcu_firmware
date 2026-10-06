@@ -11,12 +11,12 @@
 #define PULSE_ABSOLUTE_MAX_US 2500
 
 // Safe Steering Limits (Radians)
-#define STEERING_MAX_RAD 0.45f
-#define STEERING_MIN_RAD -0.45f
+#define STEERING_MAX_RAD 3.14f
+#define STEERING_MIN_RAD 0f
 
-// Safe Steering Pulse Limits (Calculated for +/- 0.45 rad)
-#define PULSE_SAFE_LEFT_US 1214
-#define PULSE_SAFE_RIGHT_US 1786
+// Safe Steering Pulse Limits (Calculated for corresponding rad)
+#define PULSE_SAFE_LEFT_US 500
+#define PULSE_SAFE_RIGHT_US 2500
 
 
 

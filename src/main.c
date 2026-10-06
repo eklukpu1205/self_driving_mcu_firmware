@@ -101,13 +101,13 @@ int main() {
 
 
         // Test Status Update
-        printf("TEST VEHICLE COMMANDS\n");
-        printf("Current steering command %.3f", incoming_cmd.target_steering);
-        printf("Current speed command %.3f", incoming_cmd.target_speed);
+        printf("\n\nTEST VEHICLE COMMANDS\n");
+        printf("\nCurrent steering command %.3f", incoming_cmd.target_steering);
+        printf("\nCurrent speed command %.3f", incoming_cmd.target_speed);
 
 
         printf("\n\nACTUAL VEHICLE VALUES\n");
-        printf("Actual speed data %.3f", incoming_cmd.target_speed);
+        printf("\nActual speed data %.3f", incoming_cmd.target_speed);
         
 
 
