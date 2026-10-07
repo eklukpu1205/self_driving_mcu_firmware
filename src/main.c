@@ -14,7 +14,7 @@
 
 // Safety check and pass Jetson's target speed and radar distance through safety_arbitrate_speed()
 
-system_safe = true;
+
 
 
 
@@ -25,6 +25,8 @@ int main() {
     // Initialize all hardware peripherals and software states
     comms_spi_init();
     actuator_hal_init();
+
+    system_safe = true;
 
     sleep_ms(3000);
 
@@ -125,4 +127,3 @@ int main() {
 }
 
 
-main();
