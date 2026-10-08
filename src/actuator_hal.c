@@ -3,6 +3,8 @@
 #include "hardware/gpio.h"
 #include "hardware/i2c.h"
 
+#include "hardware/clocks.h"
+
 // Pin Definitions 
 #define PIN_SERVO_PWM 14
 
@@ -14,7 +16,6 @@
 
 
 // PWM Timing Calculations (50 Hz)
-#define PWM_CLK_DIV 133.0f
 #define PWM_WRAP_50HZ 19999
 
 uint servo_slice;
@@ -29,7 +30,11 @@ void actuator_hal_init(void) {
 
     // Configure the PWM
     pwm_config config = pwm_get_default_config();
-    pwm_config_set_clkdiv(&config, PWM_CLK_DIV);
+    
+    uint32_t sys_clk = clock_get_hz(clk_sys);
+    float clk_div = (float) sys_clk / 1000000.0f;
+    
+    pwm_config_set_clkdiv(&config, clk_div);
     pwm_config_set_wrap(&config, PWM_WRAP_50HZ);
 
     // Load configuration into slices

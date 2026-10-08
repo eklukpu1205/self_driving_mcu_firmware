@@ -1,5 +1,6 @@
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
+#include <stdio.h>
 
 // Include subsystem headers
 #include "comms_spi.h"
@@ -26,14 +27,13 @@ int main() {
     comms_spi_init();
     actuator_hal_init();
 
-    system_safe = true;
+    bool system_safe = true;
 
     sleep_ms(3000);
 
     sensors_init();
     
 
-    EncoderFeedback WheelFeedback;
 
     // Data structures for SPI exchange
     NvidiaCommand incoming_cmd = {0};
@@ -45,7 +45,7 @@ int main() {
     incoming_cmd.target_steering = 0;
     incoming_cmd.emergency_brake = false;
     
-//Update
+
     float steering_range[7] = {0.1, 0.5, 1, 1.5, 2, 2.5, 3};
 
     int steering_index = 0;
@@ -109,7 +109,7 @@ int main() {
 
 
         printf("\n\nACTUAL VEHICLE VALUES\n");
-        printf("\nActual speed data %.3f", incoming_cmd.target_speed);
+        printf("\nActual speed data %.3f", outgoing_cmd.actual_speed);
         
 
 
