@@ -51,7 +51,7 @@ void actuator_hal_init(void) {
 
 }
 
-void set_raw_pulse(uint pin, uint16_t pulse_width_us) {
+void set_raw_pulse(int pin, uint16_t pulse_width_us) {
     
     // Bound pulse control values
     if (pulse_width_us < PULSE_ABSOLUTE_MIN_US) {
@@ -65,29 +65,15 @@ void set_raw_pulse(uint pin, uint16_t pulse_width_us) {
     pwm_set_gpio_level(pin, pulse_width_us);
 }
 
-void actuator_hal_set_steering_rad(float angle_rad) {
+void actuator_hal_set_steering_pulse_us(uint16_t pulse_us) {
+    // Bound pulse control values to safe limits
+    if (pulse_us < PULSE_ABSOLUTE_MIN_US) {
+        pulse_us = PULSE_ABSOLUTE_MIN_US;
+    }
+    if (pulse_us > PULSE_ABSOLUTE_MAX_US) {
+        pulse_us = PULSE_ABSOLUTE_MAX_US;
+    }
     
-    // Clamp input metric to mechanical limits
-    if (angle_rad < STEERING_MIN_RAD){
-        angle_rad = STEERING_MIN_RAD;
-    }
-
-    if (angle_rad > STEERING_MAX_RAD) {
-        angle_rad = STEERING_MAX_RAD;
-    }
-
-    // Map radians to pulse width 
-    float normalized = (angle_rad - STEERING_MIN_RAD) / (STEERING_MAX_RAD - STEERING_MIN_RAD); 
-    uint16_t pulse_us = (uint16_t) (PULSE_SAFE_LEFT_US + (normalized * (PULSE_SAFE_RIGHT_US - PULSE_SAFE_LEFT_US)));
-    
-    // Clamp control signal
-    if (pulse_us < PULSE_SAFE_LEFT_US){
-        pulse_us = PULSE_SAFE_LEFT_US;
-    }
-    if (pulse_us > PULSE_SAFE_RIGHT_US) {
-        pulse_us = PULSE_SAFE_RIGHT_US;
-    }
-
     set_raw_pulse(PIN_SERVO_PWM, pulse_us);
 }
 

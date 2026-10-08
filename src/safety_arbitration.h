@@ -4,4 +4,6 @@
 // Safety distance in meters
 #define SAFETY_DISTANCE 1
 
-void safety_check(void);
+
+
+bool safety_check(void);

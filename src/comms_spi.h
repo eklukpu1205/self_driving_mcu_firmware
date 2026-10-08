@@ -4,8 +4,8 @@
 
 #define COMMS_CS 13
 #define COMMS_SCLK 10
-#define COMMS_MOSI 11
-#define COMMS_MISO 12
+#define COMMS_MOSI 12
+#define COMMS_MISO 11
 
 
 typedef struct {

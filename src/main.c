@@ -10,17 +10,10 @@
 #include "encoder_feedback.h"
 #include "hiwonder_driver.h"
 
-
 #define LOOP_PERIOD_US 20000 // 50 Hz
 
-// Safety check and pass Jetson's target speed and radar distance through safety_arbitrate_speed()
-
-
-
-
-
 int main() {
-    // Initialize USB/UART for standard printf debugging
+    
     stdio_init_all();
     
     // Initialize all hardware peripherals and software states
@@ -28,31 +21,22 @@ int main() {
     actuator_hal_init();
 
     bool system_safe = true;
-
     sleep_ms(3000);
-
     sensors_init();
-    
 
-
-    // Data structures for SPI exchange
     NvidiaCommand incoming_cmd = {0};
     McuCommand outgoing_cmd = {0}; 
+    EncoderFeedback wheel_feedback; 
 
-    EncoderFeedback wheel_feedback; // Raw counts and interval results for bench inspection.
 
     incoming_cmd.target_speed = 0;
-    incoming_cmd.target_steering = 0;
     incoming_cmd.emergency_brake = false;
-    
 
-    float steering_range[7] = {0.1, 0.5, 1, 1.5, 2, 2.5, 3};
-
-    int steering_index = 0;
-
+   
+    uint16_t current_pulse_us = 1500; 
+    int pulse_step = 25;             
 
     // TEST LOOP
-
     while (1) {
         
         if (incoming_cmd.target_speed <= 100){
@@ -62,68 +46,50 @@ int main() {
         }
 
         incoming_cmd.timestamp_us = time_us_64();
-        
 
-        incoming_cmd.target_steering = steering_range[steering_index];
-        steering_index = (steering_index + 1) % 7; 
-
-       
+        // Sweep the pulse width directly
+        current_pulse_us += pulse_step;
+        if (current_pulse_us >= 2000) {
+            current_pulse_us = 2000;
+            pulse_step = -25; // Reverse direction
+        } else if (current_pulse_us <= 1000) {
+            current_pulse_us = 1000;
+            pulse_step = 25;  // Reverse direction
+        }
 
         uint64_t loop_start = time_us_64();
 
         // Check if SPI is readable, then call comms_spi_exchange()
-
         if (spi_is_readable(spi1)){
             comms_spi_exchange(&incoming_cmd, &outgoing_cmd);
         }    
 
-        
-
-        // Set motor and steering
+        // Set motor and steering using direct pulse width
         if (system_safe && !incoming_cmd.emergency_brake) {
             actuator_hal_set_throttle_effort(incoming_cmd.target_speed);
-            actuator_hal_set_steering_rad(incoming_cmd.target_steering);
+            actuator_hal_set_steering_pulse_us(current_pulse_us);
         } else {
             actuator_hal_emergency_halt(); 
         }
 
-        safety_check();
+        system_safe = safety_check();
 
-        // Read board-processed encoder totals. First/recovery reads establish a
-        // baseline; future consumers must check the return value before using deltas.
+       
         sensors_update(&wheel_feedback);
 
-
-
-        // Update outgoing_cmd with the actual speed and steering for the next SPI cycle
+        // Update outgoing_cmd with actual values for the next SPI cycle
         outgoing_cmd.actual_speed = (float)((wheel_feedback.left.speed_mps + wheel_feedback.right.speed_mps) / 2.0);
-        outgoing_cmd.actual_steering = incoming_cmd.target_steering;
+        outgoing_cmd.actual_steering = (float)current_pulse_us;
         outgoing_cmd.emergency_brake = !system_safe;
         outgoing_cmd.timestamp_us = time_us_64();
 
-
         // Test Status Update
-        printf("\n\nTEST VEHICLE COMMANDS\n");
-        printf("\nCurrent steering command %.3f", incoming_cmd.target_steering);
-        printf("\nCurrent speed command %.3f", incoming_cmd.target_speed);
-
-
-        printf("\n\nACTUAL VEHICLE VALUES\n");
-        printf("\nActual speed data %.3f", outgoing_cmd.actual_speed);
-        
-
-
-
-
-
-
-
+        printf("\nTEST VEHICLE COMMANDS\n");
+        printf("Current steering pulse %u us\n", current_pulse_us);
+        printf("Current speed command %.3f\n", incoming_cmd.target_speed);
 
         // Sleep until loop cycle has passed
         sleep_until(from_us_since_boot(loop_start + LOOP_PERIOD_US));
-
     }
     return 0;
 }
-
-
