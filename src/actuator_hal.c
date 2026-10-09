@@ -2,6 +2,7 @@
 #include "hardware/pwm.h"
 #include "hardware/gpio.h"
 #include "hardware/i2c.h"
+#include <math.h>
 
 #include "hardware/clocks.h"
 
@@ -77,7 +78,11 @@ void actuator_hal_set_steering_pulse_us(uint16_t pulse_us) {
     set_raw_pulse(PIN_SERVO_PWM, pulse_us);
 }
 
-void actuator_hal_set_throttle_effort(float throttle_percent) {
+bool actuator_hal_set_throttle_effort(float throttle_percent) {
+
+    if (!isfinite(throttle_percent)) {
+        return;
+    }
     
     // Utilize I2C to adjust the motor speed
     if (throttle_percent < -100.0f){
@@ -90,11 +95,12 @@ void actuator_hal_set_throttle_effort(float throttle_percent) {
 
     int8_t pwm_val = (int8_t) throttle_percent;
 
-    uint8_t motor_data[2];
-    motor_data[0] = MOTOR_PWM_ADDR;
-    motor_data[1] = (uint8_t) pwm_val;
+    uint8_t motor_data[5] = {MOTOR_PWM_ADDR, (uint8_t)(-pwm_val), 0, (uint8_t)(pwm_val), 0};
+ 
 
-    i2c_write_blocking(i2c0, HI_WONDER_I2C_ADDR, motor_data, 2, false);
+    int result = i2c_write_blocking(i2c0, HI_WONDER_I2C_ADDR, motor_data, sizeof(motor_data), false);
+
+    return result == (int)sizeof(motor_data);
 
 }
 

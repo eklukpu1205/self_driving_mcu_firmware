@@ -40,9 +40,9 @@ int main() {
     while (1) {
         
         if (incoming_cmd.target_speed <= 100){
-            incoming_cmd.target_speed += 10;
+            incoming_cmd.target_speed += 2.5;
         } else {
-            incoming_cmd.target_speed = 10;
+            incoming_cmd.target_speed = 2.5;
         }
 
         incoming_cmd.timestamp_us = time_us_64();
@@ -64,6 +64,11 @@ int main() {
             comms_spi_exchange(&incoming_cmd, &outgoing_cmd);
         }    
 
+
+        
+        sensors_update(&wheel_feedback);
+        system_safe = safety_check();
+
         // Set motor and steering using direct pulse width
         if (system_safe && !incoming_cmd.emergency_brake) {
             actuator_hal_set_throttle_effort(incoming_cmd.target_speed);
@@ -72,10 +77,10 @@ int main() {
             actuator_hal_emergency_halt(); 
         }
 
-        system_safe = safety_check();
+        
 
        
-        sensors_update(&wheel_feedback);
+        
 
         // Update outgoing_cmd with actual values for the next SPI cycle
         outgoing_cmd.actual_speed = (float)((wheel_feedback.left.speed_mps + wheel_feedback.right.speed_mps) / 2.0);
