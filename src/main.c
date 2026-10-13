@@ -24,6 +24,7 @@ int main() {
     sleep_ms(3000);
     sensors_init();
 
+
     NvidiaCommand incoming_cmd = {0};
     McuCommand outgoing_cmd = {0}; 
     EncoderFeedback wheel_feedback; 
@@ -69,6 +70,7 @@ int main() {
         sensors_update(&wheel_feedback);
         system_safe = safety_check();
 
+
         // Set motor and steering using direct pulse width
         if (system_safe && !incoming_cmd.emergency_brake) {
             actuator_hal_set_throttle_effort(incoming_cmd.target_speed);
@@ -98,3 +100,48 @@ int main() {
     }
     return 0;
 }
+
+
+// eitan servo testing main.
+// static void move_steering(int *current, int target) {
+//     while (*current != target) {
+//         if (*current < target) {
+//             *current += 5;
+//             if (*current > target) *current = target;
+//         } else {
+//             *current -= 5;
+//             if (*current < target) *current = target;
+//         }
+
+//         actuator_hal_set_steering_pulse_us((uint16_t)*current);
+//         sleep_ms(5);
+//     }
+// }
+
+// int main(void) {
+//     stdio_init_all();
+//     sleep_ms(3000);
+//     actuator_hal_init();
+
+//     int current = 1500;
+//     actuator_hal_set_steering_pulse_us(current);
+//     sleep_ms(1000);
+
+//     while (true) {
+//         printf("Move to 700\n");
+//         move_steering(&current, 700);
+//         sleep_ms(1000);
+
+//         printf("Move to center\n");
+//         move_steering(&current, 1500);
+//         sleep_ms(1000);
+
+//         printf("Move to 2300\n");
+//         move_steering(&current, 2300);
+//         sleep_ms(1000);
+
+//         printf("Move to center\n");
+//         move_steering(&current, 1500);
+//         sleep_ms(1000);
+//     }
+// }

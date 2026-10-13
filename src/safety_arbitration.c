@@ -1,5 +1,6 @@
 #include "safety_arbitration.h"
 #include "actuator_hal.h"
+#include <math.h> // had to add this (eitan)
 
 bool safety_check (void){
 

@@ -81,7 +81,7 @@ void actuator_hal_set_steering_pulse_us(uint16_t pulse_us) {
 bool actuator_hal_set_throttle_effort(float throttle_percent) {
 
     if (!isfinite(throttle_percent)) {
-        return;
+        return false; //had to add this (eitan)
     }
     
     // Utilize I2C to adjust the motor speed
