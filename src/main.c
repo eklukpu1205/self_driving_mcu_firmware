@@ -13,9 +13,9 @@
 #define LOOP_PERIOD_US 20000 // 50 Hz
 
 // int main() {
-    
+//     
 //     stdio_init_all();
-    
+//     
 //     // Initialize all hardware peripherals and software states
 //     comms_spi_init();
 //     actuator_hal_init();
@@ -24,22 +24,19 @@
 //     sleep_ms(3000);
 //     sensors_init();
 
-
 //     NvidiaCommand incoming_cmd = {0};
 //     McuCommand outgoing_cmd = {0}; 
 //     EncoderFeedback wheel_feedback; 
 
-
 //     incoming_cmd.target_speed = 0;
 //     incoming_cmd.emergency_brake = false;
-
    
 //     uint16_t current_pulse_us = 1500; 
 //     int pulse_step = 25;             
 
 //     // TEST LOOP
 //     while (1) {
-        
+//         
 //         if (incoming_cmd.target_speed <= 100){
 //             incoming_cmd.target_speed += 2.5;
 //         } else {
@@ -65,11 +62,8 @@
 //             comms_spi_exchange(&incoming_cmd, &outgoing_cmd);
 //         }    
 
-
-        
 //         sensors_update(&wheel_feedback);
 //         system_safe = safety_check();
-
 
 //         // Set motor and steering using direct pulse width
 //         if (system_safe && !incoming_cmd.emergency_brake) {
@@ -78,11 +72,6 @@
 //         } else {
 //             actuator_hal_emergency_halt(); 
 //         }
-
-        
-
-       
-        
 
 //         // Update outgoing_cmd with actual values for the next SPI cycle
 //         outgoing_cmd.actual_speed = (float)((wheel_feedback.left.speed_mps + wheel_feedback.right.speed_mps) / 2.0);
@@ -102,7 +91,9 @@
 // }
 
 
-// eitan servo testing main.
+/* ==========================================
+   eitan servo testing main
+   ==========================================
 static void move_steering(int *current, int target) {
     while (*current != target) {
         if (*current < target) {
@@ -144,4 +135,95 @@ int main(void) {
         move_steering(&current, 1500);
         sleep_ms(1000);
     }
+}
+========================================== */
+
+// Define test timing parameters
+#define TEST_DELAY_MS 2000
+
+void test_motor_constant_velocity() {
+    printf("\nMotor Test\n");
+    
+    float test_speed = 50.0f; 
+    
+    printf("Setting motor to %.1f%% effort\n", test_speed);
+    int test_duration_ms = TEST_DELAY_MS * 2; 
+    int iterations = test_duration_ms / 20; 
+    
+    for (int i = 0; i < iterations; i++) {
+        actuator_hal_set_throttle_effort(test_speed);
+        sleep_ms(20);
+    }
+    actuator_hal_set_throttle_effort(0.0f);
+    
+    // Hold constant velocity
+    sleep_ms(TEST_DELAY_MS * 2);
+}
+
+void test_motor_emergency_halt() {
+    printf("\nEmergency Stop Test\n");
+
+    
+    for (int i = 0; i < 250; i++) {
+        actuator_hal_set_throttle_effort(50.0f);
+        sleep_ms(20);
+    }
+    
+    uint64_t stop_start_time = time_us_64();
+    
+    // Trigger emergency stop 
+    actuator_hal_emergency_halt();
+    
+    uint64_t stop_end_time = time_us_64();
+    uint64_t elapsed_time = stop_end_time - stop_start_time;
+    
+    printf("Emergency halt executed. Execution time: %.10f us\n", elapsed_time);
+    
+    sleep_ms(TEST_DELAY_MS);
+}
+
+void test_motor_ramp() {
+    printf("\nMotor Ramp Test\n");
+
+    // Gradually ramp up motor speed
+    for (float speed = 0.0f; speed <= 100.0f; speed += 10.0f) {
+        printf("Ramping up: %.1f%%\n", speed);
+       
+        for (int i = 0; i < 25; i++) {
+            actuator_hal_set_throttle_effort(speed);
+            sleep_ms(20);
+        }
+    }
+    
+    // Gradually ramp down
+    for (float speed = 100.0f; speed >= 0.0f; speed -= 10.0f) {
+        printf("Ramping down: %.1f%%\n", speed);
+        
+        for (int i = 0; i < 25; i++) {
+            actuator_hal_set_throttle_effort(speed);
+            sleep_ms(20);
+        }
+    }
+    actuator_hal_set_throttle_effort(0.0f);
+}
+
+int main(void) {
+    stdio_init_all();
+    
+    sleep_ms(3000); 
+    
+    printf("Starting Motor Drive Test\n");
+    
+    actuator_hal_init();
+
+    while (true) {
+        test_motor_constant_velocity();
+        test_motor_emergency_halt();
+        test_motor_ramp();
+        
+        printf("\nTEST SEQUENCE COMPLETE\n");
+        sleep_ms(5000);
+    }
+    
+    return 0;
 }
