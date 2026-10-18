@@ -78,6 +78,22 @@ void actuator_hal_set_steering_pulse_us(uint16_t pulse_us) {
     set_raw_pulse(PIN_SERVO_PWM, pulse_us);
 }
 
+static void move_steering(int *current, int target) {
+    while (*current != target) {
+        if (*current < target) {
+            *current += 5;
+            if (*current > target) *current = target;
+        } else {
+            *current -= 5;
+            if (*current < target) *current = target;
+        }
+
+        actuator_hal_set_steering_pulse_us((uint16_t)*current);
+        sleep_ms(5);
+    }
+}
+
+
 bool actuator_hal_set_throttle_effort(float throttle_percent) {
 
     if (!isfinite(throttle_percent)) {
