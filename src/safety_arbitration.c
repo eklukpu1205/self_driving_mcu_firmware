@@ -1,15 +1,22 @@
+// safety_arbitration.c
 #include "safety_arbitration.h"
+#include "sensor_interface.h"
 #include "actuator_hal.h"
-#include <math.h> // had to add this (eitan)
+#include <math.h>
 
-bool safety_check (void){
+#define EMERGENCY_STOP_DISTANCE_M 0.50f
 
-    float object_distance = sensors_get_radar_distance();
+bool safety_check(void) {
+    float distance_m = sensors_get_radar_distance();
 
-    if ((!isfinite(object_distance)) || (object_distance <= SAFETY_DISTANCE)){
+    if (!isnan(distance_m) &&
+        distance_m > 0.0f &&
+        distance_m < EMERGENCY_STOP_DISTANCE_M) {
+
         actuator_hal_emergency_halt();
-        return false;
+        return true;
     }
 
-    return true;
+    return false;
 }
+

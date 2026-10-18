@@ -154,26 +154,46 @@ int main(void) {
 // Define test timing parameters
 #define TEST_DELAY_MS 2000
 
-void test_motor_constant_velocity() {
+// void test_motor_constant_velocity() {
     
     
-    float test_speed = 50.0f; 
+//     float test_speed = 50.0f; 
     
-    printf("Setting motor to %.1f%% effort\n", test_speed);
-    int test_duration_ms = TEST_DELAY_MS * 2; 
-    int iterations = test_duration_ms / 20; 
+//     printf("Setting motor to %.1f%% effort\n", test_speed);
+//     int test_duration_ms = TEST_DELAY_MS * 2; 
+//     int iterations = test_duration_ms / 20; 
     
+//     for (int i = 0; i < iterations; i++) {
+//         actuator_hal_set_throttle_effort(test_speed);
+//         //safety_check();
+//         sleep_ms(20);
+//     }
+//     actuator_hal_set_throttle_effort(0.0f);
+    
+//     // Hold constant velocity
+//     sleep_ms(TEST_DELAY_MS * 2);
+// }
+
+static bool emergency_stop_latched = false;
+void test_motor_constant_velocity(void) {
+    const float test_speed = 50.0f;
+    const int iterations = 200;
+
     for (int i = 0; i < iterations; i++) {
+        if (emergency_stop_latched || safety_check()) {
+            actuator_hal_emergency_halt();
+            emergency_stop_latched = true;
+
+            printf("Emergency braking triggered by ToF\n");
+            return;
+        }
+
         actuator_hal_set_throttle_effort(test_speed);
-        //safety_check();
         sleep_ms(20);
     }
-    actuator_hal_set_throttle_effort(0.0f);
-    
-    // Hold constant velocity
-    sleep_ms(TEST_DELAY_MS * 2);
-}
 
+    actuator_hal_set_throttle_effort(0.0f);
+}
 
 
 
@@ -187,12 +207,19 @@ int main(void) {
     
     actuator_hal_init();
 
-    while (true) {
-        test_motor_constant_velocity();
-        
-        
-        sleep_ms(1000);
+   while (true) {
+    test_motor_constant_velocity();
+
+    if (emergency_stop_latched) {
+        printf("Motor remains stopped. Reset the MCU.\n");
+
+        while (true) {
+            sleep_ms(1000);
+        }
     }
+
+    sleep_ms(1000);
+}
     
     return 0;
 }
