@@ -145,3 +145,55 @@ int main(void) {
 }
 
 */
+
+
+
+
+// EMERGENCY BRAKING TEST LOOP
+
+// Define test timing parameters
+#define TEST_DELAY_MS 2000
+
+void test_motor_constant_velocity() {
+    
+    
+    float test_speed = 50.0f; 
+    
+    printf("Setting motor to %.1f%% effort\n", test_speed);
+    int test_duration_ms = TEST_DELAY_MS * 2; 
+    int iterations = test_duration_ms / 20; 
+    
+    for (int i = 0; i < iterations; i++) {
+        actuator_hal_set_throttle_effort(test_speed);
+        //safety_check();
+        sleep_ms(20);
+    }
+    actuator_hal_set_throttle_effort(0.0f);
+    
+    // Hold constant velocity
+    sleep_ms(TEST_DELAY_MS * 2);
+}
+
+
+
+
+int main(void) {
+    stdio_init_all();
+    
+    sleep_ms(3000); 
+    
+    printf("\nEmergency Brake Test\n");
+    sensors_init();
+    
+    actuator_hal_init();
+
+    while (true) {
+        test_motor_constant_velocity();
+        
+        
+        sleep_ms(1000);
+    }
+    
+    return 0;
+}
+
