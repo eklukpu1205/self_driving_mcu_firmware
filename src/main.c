@@ -17,7 +17,8 @@
 
 
 
-/* STEERING TEST LOOP
+/*
+// STEERING TEST LOOP
 
 
 
@@ -48,6 +49,7 @@ int main(void) {
         sleep_ms(1000);
     }
 }
+
 */
 
 
@@ -55,7 +57,8 @@ int main(void) {
 
 
 
-/* MOTOR TEST LOOP
+/* 
+// MOTOR TEST LOOP
 
 // Define test timing parameters
 #define TEST_DELAY_MS 2000
@@ -215,8 +218,8 @@ int main(void) {
 
 
 
-/*
-SPI Test Loop
+
+// SPI Test Loop
 
 
 // Parse and print one complete command.
@@ -355,5 +358,3 @@ int main(void) {
 }
 
 
-
-*/

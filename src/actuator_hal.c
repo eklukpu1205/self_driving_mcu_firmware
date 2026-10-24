@@ -78,7 +78,7 @@ void actuator_hal_set_steering_pulse_us(uint16_t pulse_us) {
     set_raw_pulse(PIN_SERVO_PWM, pulse_us);
 }
 
-static void move_steering(int *current, int target) {
+void move_steering(int *current, int target) {
     while (*current != target) {
         if (*current < target) {
             *current += 5;
