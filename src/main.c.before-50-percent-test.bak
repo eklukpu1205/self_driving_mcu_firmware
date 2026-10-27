@@ -1,0 +1,324 @@
+#include "pico/stdlib.h"
+#include "hardware/spi.h"
+#include <stdio.h>
+
+// Include subsystem headers
+#include "comms_spi.h"
+#include "safety_arbitration.h"
+#include "sensor_interface.h"
+#include "actuator_hal.h"
+#include "encoder_feedback.h"
+#include "hiwonder_driver.h"
+
+#define LOOP_PERIOD_US 20000 // 50 Hz
+
+
+
+/* STEERING TEST LOOP
+
+
+
+int main(void) {
+    stdio_init_all();
+    sleep_ms(3000);
+    actuator_hal_init();
+
+    int current = 1500;
+    actuator_hal_set_steering_pulse_us(current);
+    sleep_ms(1000);
+
+    while (true) {
+        printf("Move to 700\n");
+        move_steering(&current, 700);
+        sleep_ms(1000);
+
+        printf("Move to center\n");
+        move_steering(&current, 1500);
+        sleep_ms(1000);
+
+        printf("Move to 2300\n");
+        move_steering(&current, 2300);
+        sleep_ms(1000);
+
+        printf("Move to center\n");
+        move_steering(&current, 1500);
+        sleep_ms(1000);
+    }
+}
+*/
+
+
+
+
+
+
+/* MOTOR TEST LOOP
+
+// Define test timing parameters
+#define TEST_DELAY_MS 2000
+
+void test_motor_constant_velocity() {
+    printf("\nMotor Test\n");
+    
+    float test_speed = 50.0f; 
+    
+    printf("Setting motor to %.1f%% effort\n", test_speed);
+    int test_duration_ms = TEST_DELAY_MS * 2; 
+    int iterations = test_duration_ms / 20; 
+    
+    for (int i = 0; i < iterations; i++) {
+        actuator_hal_set_throttle_effort(test_speed);
+        sleep_ms(20);
+    }
+    actuator_hal_set_throttle_effort(0.0f);
+    
+    // Hold constant velocity
+    sleep_ms(TEST_DELAY_MS * 2);
+}
+
+void test_motor_emergency_halt() {
+    printf("\nEmergency Stop Test\n");
+
+    
+    for (int i = 0; i < 250; i++) {
+        actuator_hal_set_throttle_effort(50.0f);
+        sleep_ms(20);
+    }
+    
+    uint64_t stop_start_time = time_us_64();
+    
+    // Trigger emergency stop 
+    actuator_hal_emergency_halt();
+    
+    uint64_t stop_end_time = time_us_64();
+    uint64_t elapsed_time = stop_end_time - stop_start_time;
+    
+    printf("Emergency halt executed. Execution time: %.10f us\n", elapsed_time);
+    
+    sleep_ms(TEST_DELAY_MS);
+}
+
+void test_motor_ramp() {
+    printf("\nMotor Ramp Test\n");
+
+    // Gradually ramp up motor speed
+    for (float speed = 0.0f; speed <= 100.0f; speed += 10.0f) {
+        printf("Ramping up: %.1f%%\n", speed);
+       
+        for (int i = 0; i < 25; i++) {
+            actuator_hal_set_throttle_effort(speed);
+            sleep_ms(20);
+        }
+    }
+    
+    // Gradually ramp down
+    for (float speed = 100.0f; speed >= 0.0f; speed -= 10.0f) {
+        printf("Ramping down: %.1f%%\n", speed);
+        
+        for (int i = 0; i < 25; i++) {
+            actuator_hal_set_throttle_effort(speed);
+            sleep_ms(20);
+        }
+    }
+    actuator_hal_set_throttle_effort(0.0f);
+}
+
+int main(void) {
+    stdio_init_all();
+    
+    sleep_ms(3000); 
+    
+    printf("Starting Motor Drive Test\n");
+    
+    actuator_hal_init();
+
+    while (true) {
+        test_motor_constant_velocity();
+        test_motor_emergency_halt();
+        test_motor_ramp();
+        
+        printf("\nTEST SEQUENCE COMPLETE\n");
+        sleep_ms(5000);
+    }
+    
+    return 0;
+}
+
+*/
+
+
+
+
+// EMERGENCY BRAKING TEST LOOP
+
+// Define test timing parameters
+#define TEST_DELAY_MS 2000
+
+// void test_motor_constant_velocity() {
+    
+    
+//     float test_speed = 50.0f; 
+    
+//     printf("Setting motor to %.1f%% effort\n", test_speed);
+//     int test_duration_ms = TEST_DELAY_MS * 2; 
+//     int iterations = test_duration_ms / 20; 
+    
+//     for (int i = 0; i < iterations; i++) {
+//         actuator_hal_set_throttle_effort(test_speed);
+//         //safety_check();
+//         sleep_ms(20);
+//     }
+//     actuator_hal_set_throttle_effort(0.0f);
+    
+//     // Hold constant velocity
+//     sleep_ms(TEST_DELAY_MS * 2);
+// }
+
+// static bool emergency_stop_latched = false;
+// void test_motor_constant_velocity(void) {
+//     const float test_speed = 50.0f;
+//     const int iterations = 200;
+
+//     for (int i = 0; i < iterations; i++) {
+//         if (emergency_stop_latched || safety_check()) {
+//             actuator_hal_emergency_halt();
+//             emergency_stop_latched = true;
+
+//             printf("Emergency braking triggered by ToF\n");
+//             return;
+//         }
+
+//         actuator_hal_set_throttle_effort(test_speed);
+//         sleep_ms(20);
+//     }
+
+//     actuator_hal_set_throttle_effort(0.0f);
+// }
+
+#include <math.h>
+
+static bool emergency_stop_latched = false;
+
+void test_motor_constant_velocity(void) {
+    const float test_effort = 50.0f;
+
+    for (int i = 0; i < 200; i++) {
+        uint64_t start_us = time_us_64();
+        float distance_m = sensors_get_radar_distance();
+        uint64_t elapsed_us = time_us_64() - start_us;
+
+        printf("ToF: %.3f m | read time: %llu us\n",
+               (double)distance_m,
+               (unsigned long long)elapsed_us);
+
+        if (!isfinite(distance_m) || distance_m <= 0.0f ||
+            distance_m < 0.5f) {
+            actuator_hal_emergency_halt();
+            emergency_stop_latched = true;
+            printf("STOP: close object or invalid sensor reading\n");
+            return;
+        }
+
+        actuator_hal_set_throttle_effort(test_effort);
+        sleep_ms(20);
+    }
+
+    actuator_hal_set_throttle_effort(0.0f);
+}
+
+// int main(void) {
+//     stdio_init_all();
+    
+//     sleep_ms(3000); 
+    
+//     printf("\nEmergency Brake Test\n");
+//     sensors_init();
+    
+//     actuator_hal_init();
+
+//    while (true) {
+//     test_motor_constant_velocity();
+
+//     if (emergency_stop_latched) {
+//         printf("Motor remains stopped. Reset the MCU.\n");
+
+//         while (true) {
+//             sleep_ms(1000);
+//         }
+//     }
+
+//     sleep_ms(1000);
+// }
+    
+//     return 0;
+// }
+
+int main(void) {
+    stdio_init_all();
+    actuator_hal_init();
+    actuator_hal_emergency_halt();
+    sleep_ms(3000);
+    printf("\nToF motor bench test: lift wheels before powering motors.\n");
+    sensors_init();
+
+    // Bench-test allowance for intermittent missed measurements.
+    const uint64_t stale_limit_us = 1000000u;
+    uint64_t last_valid_us = 0;
+    const uint64_t startup_deadline = time_us_64() + 5000000u;
+    bool armed = false;
+    // Wait while stopped for one valid clear reading. Invalid samples can recover.
+    while (time_us_64() < startup_deadline) {
+        float distance_m = sensors_get_radar_distance();
+        printf("Startup distance: %.3f m\n", (double)distance_m);
+        if (isfinite(distance_m) && distance_m <= 1.0f) {
+            emergency_stop_latched = true;
+            printf("STOP: object within 1.0 m.\n");
+            break;
+        }
+        if (isfinite(distance_m)) {
+            last_valid_us = time_us_64();
+            armed = true;
+            break;
+        }
+        sleep_ms(20);
+    }
+    if (!armed) emergency_stop_latched = true;
+
+    const uint64_t test_start_us = time_us_64();
+    // One run, at 30 percent effort, lasting at most ten seconds.
+    while (!emergency_stop_latched &&
+           time_us_64() - test_start_us < 10000000u) {
+        float distance_m = sensors_get_radar_distance();
+        uint64_t now_us = time_us_64();
+        if (isfinite(distance_m)) last_valid_us = now_us;
+        if (now_us - last_valid_us > stale_limit_us) {
+            actuator_hal_emergency_halt();
+            emergency_stop_latched = true;
+            printf("STOP: sensor unavailable for 1 second.\n");
+            break;
+        }
+        if (isfinite(distance_m) && distance_m <= 1.0f) {
+            actuator_hal_emergency_halt();
+            emergency_stop_latched = true;
+            printf("STOP: ToF %.3f m (close object or invalid reading).\n",
+                   (double)distance_m);
+            break;
+        }
+        if (!actuator_hal_set_throttle_effort(30.0f)) {
+            actuator_hal_emergency_halt();
+            emergency_stop_latched = true;
+            printf("STOP: motor command failed.\n");
+            break;
+        }
+        printf("ToF: %.3f m | motor effort: 30 percent\n", (double)distance_m);
+        sleep_ms(20);
+    }
+
+    actuator_hal_emergency_halt();
+    printf("Test stopped. Reset MCU to run again.\n");
+    while (true) {
+        // Repeat zero commands; never automatically restart the motors.
+        actuator_hal_set_throttle_effort(0.0f);
+        sleep_ms(100);
+    }
+}

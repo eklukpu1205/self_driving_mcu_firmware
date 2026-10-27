@@ -78,6 +78,28 @@ void actuator_hal_set_steering_pulse_us(uint16_t pulse_us) {
     set_raw_pulse(PIN_SERVO_PWM, pulse_us);
 }
 
+bool actuator_hal_set_steering_angle_deg(float angle_deg) {
+    if (!isfinite(angle_deg)) {
+        return false;
+    }
+
+    if (angle_deg < 0.0f) angle_deg = 0.0f;
+    if (angle_deg > 180.0f) angle_deg = 180.0f;
+
+    // Use the existing pulse limits and neutral setting.
+    float pulse_us;
+    if (angle_deg <= 90.0f) {
+        pulse_us = PULSE_ABSOLUTE_MIN_US + (angle_deg / 90.0f) *
+            (PULSE_NEUTRAL_US - PULSE_ABSOLUTE_MIN_US);
+    } else {
+        pulse_us = PULSE_NEUTRAL_US + ((angle_deg - 90.0f) / 90.0f) *
+            (PULSE_ABSOLUTE_MAX_US - PULSE_NEUTRAL_US);
+    }
+
+    actuator_hal_set_steering_pulse_us((uint16_t)lroundf(pulse_us));
+    return true;
+}
+
 static void move_steering(int *current, int target) {
     while (*current != target) {
         if (*current < target) {
@@ -114,7 +136,8 @@ bool actuator_hal_set_throttle_effort(float throttle_percent) {
     uint8_t motor_data[5] = {MOTOR_PWM_ADDR, (uint8_t)(-pwm_val), 0, (uint8_t)(pwm_val), 0};
  
 
-    int result = i2c_write_blocking(i2c0, HI_WONDER_I2C_ADDR, motor_data, sizeof(motor_data), false);
+    int result = i2c_write_timeout_us(i2c0, HI_WONDER_I2C_ADDR,
+                                    motor_data, sizeof(motor_data), false, 3000);
 
     return result == (int)sizeof(motor_data);
 

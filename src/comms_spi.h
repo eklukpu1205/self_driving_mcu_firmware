@@ -2,10 +2,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define COMMS_CS 13
 #define COMMS_SCLK 10
 #define COMMS_MOSI 12
 #define COMMS_MISO 11
+#define COMMS_CS   13
+
 
 
 typedef struct {

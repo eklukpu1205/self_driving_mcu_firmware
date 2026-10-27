@@ -3,6 +3,11 @@
 #include "comms_spi.h"
 #include <string.h>
 
+#define COMMS_SCLK 10
+#define COMMS_MOSI 12
+#define COMMS_MISO 11
+#define COMMS_CS   13
+
 void comms_spi_init(void) {
  
     spi_init(spi1, 1000000);

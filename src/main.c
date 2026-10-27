@@ -152,7 +152,7 @@ int main(void) {
 // EMERGENCY BRAKING TEST LOOP
 
 // Define test timing parameters
-#define TEST_DELAY_MS 2000
+// #define TEST_DELAY_MS 2000
 
 // void test_motor_constant_velocity() {
     
@@ -174,53 +174,310 @@ int main(void) {
 //     sleep_ms(TEST_DELAY_MS * 2);
 // }
 
-static bool emergency_stop_latched = false;
-void test_motor_constant_velocity(void) {
-    const float test_speed = 50.0f;
-    const int iterations = 200;
+// static bool emergency_stop_latched = false;
+// void test_motor_constant_velocity(void) {
+//     const float test_speed = 50.0f;
+//     const int iterations = 200;
 
-    for (int i = 0; i < iterations; i++) {
-        if (emergency_stop_latched || safety_check()) {
-            actuator_hal_emergency_halt();
-            emergency_stop_latched = true;
+//     for (int i = 0; i < iterations; i++) {
+//         if (emergency_stop_latched || safety_check()) {
+//             actuator_hal_emergency_halt();
+//             emergency_stop_latched = true;
 
-            printf("Emergency braking triggered by ToF\n");
-            return;
-        }
+//             printf("Emergency braking triggered by ToF\n");
+//             return;
+//         }
 
-        actuator_hal_set_throttle_effort(test_speed);
-        sleep_ms(20);
+//         actuator_hal_set_throttle_effort(test_speed);
+//         sleep_ms(20);
+//     }
+
+//     actuator_hal_set_throttle_effort(0.0f);
+// }
+
+// #include <math.h>
+
+// static bool emergency_stop_latched = false;
+
+// void test_motor_constant_velocity(void) {
+//     const float test_effort = 50.0f;
+
+//     for (int i = 0; i < 200; i++) {
+//         uint64_t start_us = time_us_64();
+//         float distance_m = sensors_get_radar_distance();
+//         uint64_t elapsed_us = time_us_64() - start_us;
+
+//         printf("ToF: %.3f m | read time: %llu us\n",
+//                (double)distance_m,
+//                (unsigned long long)elapsed_us);
+
+//         if (!isfinite(distance_m) || distance_m <= 0.0f ||
+//             distance_m < 0.5f) {
+//             actuator_hal_emergency_halt();
+//             emergency_stop_latched = true;
+//             printf("STOP: close object or invalid sensor reading\n");
+//             return;
+//         }
+
+//         actuator_hal_set_throttle_effort(test_effort);
+//         sleep_ms(20);
+//     }
+
+//     actuator_hal_set_throttle_effort(0.0f);
+// }
+
+// int main(void) {
+//     stdio_init_all();
+    
+//     sleep_ms(3000);
+    
+//     printf("\nEmergency Brake Test\n");
+//     sensors_init();
+    
+//     actuator_hal_init();
+
+//    while (true) {
+//     test_motor_constant_velocity();
+
+//     if (emergency_stop_latched) {
+//         printf("Motor remains stopped. Reset the MCU.\n");
+
+//         while (true) {
+//             sleep_ms(1000);
+//         }
+//     }
+
+//     sleep_ms(1000);
+// }
+    
+//     return 0;
+// }
+
+// int main(void) {
+//     stdio_init_all();
+//     actuator_hal_init();
+//     actuator_hal_emergency_halt();
+//     sleep_ms(3000);
+//     printf("\nToF motor bench test: lift wheels before powering motors.\n");
+//     sensors_init();
+
+//     // Bench-test allowance for intermittent missed measurements.
+//     const uint64_t stale_limit_us = 1000000u;
+//     uint64_t last_valid_us = 0;
+//     const uint64_t startup_deadline = time_us_64() + 5000000u;
+//     bool armed = false;
+//     // Wait while stopped for one valid clear reading. Invalid samples can recover.
+//     while (time_us_64() < startup_deadline) {
+//         float distance_m = sensors_get_radar_distance();
+//         printf("Startup distance: %.3f m\n", (double)distance_m);
+//         if (isfinite(distance_m) && distance_m <= 1.0f) {
+//             emergency_stop_latched = true;
+//             printf("STOP: object within 1.0 m.\n");
+//             break;
+//         }
+//         if (isfinite(distance_m)) {
+//             last_valid_us = time_us_64();
+//             armed = true;
+//             break;
+//         }
+//         sleep_ms(20);
+//     }
+//     if (!armed) emergency_stop_latched = true;
+
+//     const uint64_t test_start_us = time_us_64();
+//     // One run, at 50 percent effort, lasting at most ten seconds.
+//     while (!emergency_stop_latched &&
+//            time_us_64() - test_start_us < 10000000u) {
+//         float distance_m = sensors_get_radar_distance();
+//         uint64_t now_us = time_us_64();
+//         if (isfinite(distance_m)) last_valid_us = now_us;
+//         if (now_us - last_valid_us > stale_limit_us) {
+//             actuator_hal_emergency_halt();
+//             emergency_stop_latched = true;
+//             printf("STOP: sensor unavailable for 1 second.\n");
+//             break;
+//         }
+//         if (isfinite(distance_m) && distance_m <= 1.0f) {
+//             actuator_hal_emergency_halt();
+//             emergency_stop_latched = true;
+//             printf("STOP: ToF %.3f m (close object or invalid reading).\n",
+//                    (double)distance_m);
+//             break;
+//         }
+//         if (!actuator_hal_set_throttle_effort(50.0f)) {
+//             actuator_hal_emergency_halt();
+//             emergency_stop_latched = true;
+//             printf("STOP: motor command failed.\n");
+//             break;
+//         }
+//         printf("ToF: %.3f m | motor effort: 50 percent\n", (double)distance_m);
+//         sleep_ms(20);
+//     }
+
+//     actuator_hal_emergency_halt();
+//     printf("Test stopped. Reset MCU to run again.\n");
+//     while (true) {
+//         // Repeat zero commands; never automatically restart the motors.
+//         actuator_hal_set_throttle_effort(0.0f);
+//         sleep_ms(100);
+//     }
+// }
+
+
+#include "pico/stdlib.h"
+#include "hardware/spi.h"
+#include "hardware/regs/spi.h"
+#include "comms_spi.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+
+// Parse and print one complete command.
+// Returns true only when all four fields are valid.
+static bool print_command(const char *line) {
+    int sequence;
+    int speed;
+    int steering;
+    int brake;
+    char extra;
+
+    // Width limits keep malformed numbers small enough for int.
+    // A fifth character means unwanted data followed the four fields.
+    const int fields = sscanf(
+        line,
+        "%5d,%4d,%4d,%1d%c",
+        &sequence,
+        &speed,
+        &steering,
+        &brake,
+        &extra
+    );
+
+    if (fields != 4) {
+        return false;
     }
 
-    actuator_hal_set_throttle_effort(0.0f);
+    // Demonstration ranges, not calibrated actuator limits.
+    if (sequence < 0 || sequence > 65535 ||
+        speed < -500 || speed > 500 ||
+        steering < -450 || steering > 450 ||
+        (brake != 0 && brake != 1)) {
+        return false;
+    }
+
+    printf(
+        "[RX] seq=%d speed_mm_s=%d steering_mrad=%d brake=%d\n",
+        sequence,
+        speed,
+        steering,
+        brake
+    );
+
+    // Stage 2 can later pass validated values through safety/control.
+    // No motor or servo commands are issued in this demonstration.
+    return true;
 }
-
-
 
 int main(void) {
+    // Use the existing working standard-output configuration.
     stdio_init_all();
-    
-    sleep_ms(3000); 
-    
-    printf("\nEmergency Brake Test\n");
-    sensors_init();
-    
-    actuator_hal_init();
+    sleep_ms(3000);
 
-   while (true) {
-    test_motor_constant_velocity();
+    printf("\nStarting SPI receiver...\n");
+    fflush(stdout);
+    // Existing function configures SPI1 slave on GPIO10/11/12/13.
+    comms_spi_init();
 
-    if (emergency_stop_latched) {
-        printf("Motor remains stopped. Reset the MCU.\n");
+    spi_set_format(
+        spi1,
+        8,
+        SPI_CPOL_0,
+        SPI_CPHA_1,
+        SPI_MSB_FIRST
+    );
 
-        while (true) {
-            sleep_ms(1000);
+    printf("SPI CR0=0x%08lX CR1=0x%08lX\n",
+       (unsigned long)spi_get_hw(spi1)->cr0,
+       (unsigned long)spi_get_hw(spi1)->cr1);
+
+    char line[64];
+    unsigned int used = 0;
+
+    bool discard_line = false;
+    bool timeout_reported = false;
+
+    uint64_t last_byte_us = time_us_64();
+    uint64_t last_valid_us = last_byte_us;
+
+    printf("\nSPI RECEIVER READY - ACTUATORS DISABLED\n");
+    printf("SCK=GPIO10, MOSI/RX=GPIO12, CS=GPIO13\n");
+
+    while (true) {
+        // Detect receive-FIFO overflow and discard the damaged line.
+        if (spi_get_hw(spi1)->ris & SPI_SSPRIS_RORRIS_BITS) {
+            spi_get_hw(spi1)->icr = SPI_SSPICR_RORIC_BITS;
+            used = 0;
+            discard_line = true;
         }
+
+        // Read only available bytes. Never wait for more master clocks.
+        if (spi_is_readable(spi1)) {
+            const char received = (char)spi_get_hw(spi1)->dr;
+            last_byte_us = time_us_64();
+
+            if (received == '\n') {
+                line[used] = '\0';
+
+                if (!discard_line && print_command(line)) {
+                    last_valid_us = time_us_64();
+
+                    if (timeout_reported) {
+                        printf("[COMM] valid reception resumed\n");
+                    }
+
+                    timeout_reported = false;
+                } else {
+                    printf("[RX REJECT] invalid or incomplete command\n");
+                }
+
+                used = 0;
+                discard_line = false;
+            } else if (!discard_line) {
+                if (used < sizeof(line) - 1) {
+                    line[used++] = received;
+                } else {
+                    // Ignore an oversized command until its newline.
+                    discard_line = true;
+                }
+            }
+        }
+
+        const uint64_t now = time_us_64();
+
+        // Discard a partial command if the remaining bytes never arrive.
+        if ((used != 0 || discard_line) &&
+        now - last_byte_us > 10000) {
+
+        printf("[RX TIMEOUT] %u bytes:", used);
+
+        for (unsigned int i = 0; i < used; i++) {
+            printf(" %02X", (unsigned int)(uint8_t)line[i]);
+        }
+
+        printf("\n");
+
+        used = 0;
+        discard_line = false;
     }
+        // Report once when no valid command has arrived for 250 ms.
+        if (!timeout_reported &&
+            now - last_valid_us > 250000) {
+            printf("[COMM TIMEOUT] no valid command for 250 ms\n");
+            timeout_reported = true;
+        }
 
-    sleep_ms(1000);
+        // Poll continuously so the small SPI FIFO is drained promptly.
+        tight_loop_contents();
+    }
 }
-    
-    return 0;
-}
-
