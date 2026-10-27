@@ -1,27 +1,16 @@
 #pragma once
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
-#define COMMS_CS 13
-#define COMMS_SCLK 10
-#define COMMS_MOSI 12
-#define COMMS_MISO 11
+// Jetson SPI0 master -> RP2 SPI1 slave, bench test only.
+#define COMMS_CS       13u
+#define COMMS_SCLK     10u
+#define COMMS_MOSI     12u  // RP SPI1 RX
+#define COMMS_MISO     11u  // RP SPI1 TX
 
+#define COMMS_FRAME_BYTES 32u
 
-typedef struct {
-    float target_speed;
-    float target_steering;
-    bool emergency_brake;
-    uint64_t timestamp_us;
-} NvidiaCommand;
-
-
-typedef struct {
-    float actual_speed;
-    float actual_steering;
-    bool emergency_brake;
-    uint64_t timestamp_us;
-} McuCommand;
-
+// Receive-side SPI interrupt and ring buffer: never print inside the IRQ.
 void comms_spi_init(void);
-void comms_spi_exchange(NvidiaCommand* cmd_in, const McuCommand* cmd_out);
+bool comms_spi_read_byte(uint8_t *out);
+uint32_t comms_spi_error_count(void);
