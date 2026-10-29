@@ -224,141 +224,6 @@ int main(void) {
 // SPI Test Loop
 
 
-// // Parse and print one complete command.
-// // Returns true only when all four fields are valid.
-// static bool print_command(const char *line) {
-//     int sequence;
-//     int speed;
-//     int steering;
-//     int brake;
-//     char extra;
-
-//     // Width limits keep malformed numbers small enough for int.
-//     // A fifth character means unwanted data followed the four fields.
-//     const int fields = sscanf(
-//         line,
-//         "%5d,%4d,%4d,%1d%c",
-//         &sequence,
-//         &speed,
-//         &steering,
-//         &brake,
-//         &extra
-//     );
-
-//     if (fields != 4) {
-//         return false;
-//     }
-
-//     // Demonstration ranges, not calibrated actuator limits.
-//     if (sequence < 0 || sequence > 65535 ||
-//         speed < -500 || speed > 500 ||
-//         steering < -450 || steering > 450 ||
-//         (brake != 0 && brake != 1)) {
-//         return false;
-//     }
-
-//     printf(
-//         "[RX] seq=%d speed_mm_s=%d steering_mrad=%d brake=%d\n",
-//         sequence,
-//         speed,
-//         steering,
-//         brake
-//     );
-
-//     // Stage 2 can later pass validated values through safety/control.
-//     // No motor or servo commands are issued in this demonstration.
-//     return true;
-// }
-
-// int main(void) {
-//     // Use the existing working standard-output configuration.
-//     stdio_init_all();
-
-//     // Existing function configures SPI1 slave on GPIO10/11/12/13.
-//     comms_spi_init();
-
-//     spi_set_format(
-//         spi1,
-//         8,
-//         SPI_CPOL_0,
-//         SPI_CPHA_1,
-//         SPI_MSB_FIRST
-//     );
-
-//     char line[64];
-//     unsigned int used = 0;
-
-//     bool discard_line = false;
-//     bool timeout_reported = false;
-
-//     uint64_t last_byte_us = time_us_64();
-//     uint64_t last_valid_us = last_byte_us;
-
-//     printf("\nSPI RECEIVER READY - ACTUATORS DISABLED\n");
-//     printf("SCK=GPIO10, MOSI/RX=GPIO12, CS=GPIO13\n");
-
-//     while (true) {
-//         // Detect receive-FIFO overflow and discard the damaged line.
-//         if (spi_get_hw(spi1)->ris & SPI_SSPRIS_RORRIS_BITS) {
-//             spi_get_hw(spi1)->icr = SPI_SSPICR_RORIC_BITS;
-//             used = 0;
-//             discard_line = true;
-//         }
-
-//         // Read only available bytes. Never wait for more master clocks.
-//         if (spi_is_readable(spi1)) {
-//             const char received = (char)spi_get_hw(spi1)->dr;
-//             last_byte_us = time_us_64();
-
-//             if (received == '\n') {
-//                 line[used] = '\0';
-
-//                 if (!discard_line && print_command(line)) {
-//                     last_valid_us = time_us_64();
-
-//                     if (timeout_reported) {
-//                         printf("[COMM] valid reception resumed\n");
-//                     }
-
-//                     timeout_reported = false;
-//                 } else {
-//                     printf("[RX REJECT] invalid or incomplete command\n");
-//                 }
-
-//                 used = 0;
-//                 discard_line = false;
-//             } else if (!discard_line) {
-//                 if (used < sizeof(line) - 1) {
-//                     line[used++] = received;
-//                 } else {
-//                     // Ignore an oversized command until its newline.
-//                     discard_line = true;
-//                 }
-//             }
-//         }
-
-//         const uint64_t now = time_us_64();
-
-//         // Discard a partial command if the remaining bytes never arrive.
-//         if ((used != 0 || discard_line) &&
-//             now - last_byte_us > 10000) {
-//             used = 0;
-//             discard_line = false;
-//             printf("[RX REJECT] incomplete command timed out\n");
-//         }
-
-//         // Report once when no valid command has arrived for 250 ms.
-//         if (!timeout_reported &&
-//             now - last_valid_us > 250000) {
-//             printf("[COMM TIMEOUT] no valid command for 250 ms\n");
-//             timeout_reported = true;
-//         }
-
-//         // Poll continuously so the small SPI FIFO is drained promptly.
-//         tight_loop_contents();
-//     }
-// }
-
 
 int main(void) {
     stdio_init_all();
@@ -378,6 +243,10 @@ int main(void) {
     uint64_t last_valid_us = now, last_byte_us = now;
     uint64_t next_tick_us = now + SPI_CMD_PERIOD_US;
     uint64_t next_status_us = now + 1000000u;
+    // save the first 32 bytes each sec
+    uint8_t debug_bytes[32];
+    unsigned debug_used = 0;
+    uint32_t previous_rx_count = 0;
 
     puts("SPI BINARY RX READY - ACTUATORS DISABLED");
     puts("SPI1 GP10=SCK GP12=RX GP11=TX GP13=CS; 10 bytes; 50 Hz");
@@ -385,8 +254,12 @@ int main(void) {
     while (true) {
         uint8_t b;
         while (comms_spi_read_byte(&b)) {
+            
             last_byte_us = time_us_64();
-
+            // debug
+            if (debug_used < sizeof(debug_bytes)){
+                debug_bytes[debug_used++] = b;
+            }
             // Stream resync: look for magic bytes 5A A5, then 8 more bytes.
             if (used == 0) {
                 if (b != (uint8_t)(SPI_CMD_MAGIC & 0xffu)) continue;
@@ -510,6 +383,15 @@ int main(void) {
                    (unsigned long)ticks_this_second,
                    (unsigned long)hw_errors,
                    (unsigned long)ring_errors);
+                   uint32_t rx_count = comms_spi_rx_byte_count();
+                   printf("[RX RATE] bytes/s=%lu\n", (unsigned long) (rx_count - previous_rx_count));
+                   previous_rx_count = rx_count;
+                   printf("[RAW RX]");
+                   for (unsigned i=0; i < debug_used; i++){
+                        printf(" %02X", (unsigned)debug_bytes[i]);
+                   }
+                   printf("\n");
+                   debug_used = 0;
             valid_this_second = 0;
             ticks_this_second = 0;
             next_status_us += 1000000u;
