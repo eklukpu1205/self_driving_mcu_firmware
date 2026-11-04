@@ -3,8 +3,6 @@
 #include "hiwonder_driver.h"
 #include "pico/stdlib.h"
 #include <math.h>
-#include "hardware/i2c.h"
-#include "hardware/gpio.h"
 
 static EncoderState encoder_state;
 static bool encoder_ready;
