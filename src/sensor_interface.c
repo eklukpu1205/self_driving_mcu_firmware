@@ -4,6 +4,7 @@
 #include "pico/stdlib.h"
 #include <math.h>
 #include "hardware/i2c.h"
+#include "hardware/gpio.h"
 
 static EncoderState encoder_state;
 static bool encoder_ready;
@@ -15,12 +16,21 @@ static const EncoderWheelConfig wheels[2] = {
      ENCODER_RIGHT_COUNTS_PER_WHEEL_REV, ENCODER_RIGHT_CIRCUMFERENCE_M}
 };
 
-#define TOF_I2C_BUS i2c0
-#define TOF_SDA_PIN 4
-#define TOF_SCL_PIN 5
-#define TOF_ADDRESS 0x29
+#define TOF_I2C_BUS   i2c0
+#define TOF_SDA_PIN   4
+#define TOF_SCL_PIN   5
+#define TOF_INT_PIN   15 // ToF Interrupt Pin 
+#define TOF_ADDRESS   0x29
 
 static bool tof_ready;
+static volatile bool tof_data_ready = false;
+
+// GPIO Interrupt Handler for ToF Sensor
+static void tof_gpio_isr(uint gpio, uint32_t events) {
+    if (gpio == TOF_INT_PIN && (events & GPIO_IRQ_EDGE_FALL)) {
+        tof_data_ready = true;
+    }
+}
 
 static bool tof_write_register(uint8_t reg, uint8_t value) {
     uint8_t data[2] = {reg, value};
@@ -65,6 +75,12 @@ static bool tof_init(void) {
     gpio_pull_up(TOF_SDA_PIN);
     gpio_pull_up(TOF_SCL_PIN);
 
+    // Initialize ToF Interrupt Pin
+    gpio_init(TOF_INT_PIN);
+    gpio_set_dir(TOF_INT_PIN, GPIO_IN);
+    gpio_pull_up(TOF_INT_PIN);
+    gpio_set_irq_enabled_with_callback(TOF_INT_PIN, GPIO_IRQ_EDGE_FALL, true, &tof_gpio_isr);
+
     sleep_ms(20);
 
     if (!tof_read_register(0xC0, &model_id)) {
@@ -75,49 +91,21 @@ static bool tof_init(void) {
 }
 
 static bool tof_read_distance_mm(uint16_t *distance_mm) {
-    uint8_t status = 0;
     uint8_t range_data[2] = {0, 0};
-    bool measurement_started = false;
-    bool measurement_ready = false;
 
+    // Trigger single shot measurement
     if (!tof_write_register(0x00, 0x01)) {
         return false;
     }
 
-    for (int i = 0; i < 100; i++) {
-        uint8_t start = 0;
-
-        if (!tof_read_register(0x00, &start)) {
-            return false;
+    // Reset interrupt flag and wait for the hardware interrupt
+    tof_data_ready = false;
+    uint32_t start_time = time_us_32();
+    while (!tof_data_ready) {
+        if (time_us_32() - start_time > 50000u) { // 50ms timeout fallback
+            break; 
         }
-
-        if ((start & 0x01) == 0) {
-            measurement_started = true;
-            break;
-        }
-
-        sleep_ms(1);
-    }
-
-    if (!measurement_started) {
-        return false;
-    }
-
-    for (int i = 0; i < 100; i++) {
-        if (!tof_read_register(0x13, &status)) {
-            return false;
-        }
-
-        if (status & 0x07) {
-            measurement_ready = true;
-            break;
-        }
-
-        sleep_ms(1);
-    }
-
-    if (!measurement_ready) {
-        return false;
+        tight_loop_contents();
     }
 
     uint8_t range_register = 0x1E;
