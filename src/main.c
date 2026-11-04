@@ -220,6 +220,7 @@ int main(void) {
 
 
 
+/*
 
 // SPI Test Loop
 
@@ -388,11 +389,7 @@ int main(void) {
                    previous_rx_count = rx_count;
                    printf("[RAW RX]");
                    for (unsigned i=0; i < debug_used; i++){
-<<<<<<< HEAD
                     printf("%02X", (unsigned)debug_bytes[i]);
-=======
-                        printf(" %02X", (unsigned)debug_bytes[i]);
->>>>>>> 7e036739ae2a93b9e031be4a62a002535a79b0c4
                    }
                    printf("\n");
                    debug_used = 0;
@@ -404,3 +401,6 @@ int main(void) {
         tight_loop_contents();
     }
 }
+
+
+*/

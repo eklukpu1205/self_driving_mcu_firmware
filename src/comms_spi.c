@@ -41,7 +41,7 @@ void comms_spi_init(void) {
     rx_head = rx_tail = 0;
     rx_bytes = hw_overruns = ring_overruns = 0;
     spi_init(spi1, 1000000); // Slave; Jetson dictates SCK frequency.
-    spi_set_format(spi1, 8, SPI_CPOL_0, SPI_CPHA_0, SPI_MSB_FIRST);
+    spi_set_format(spi1, 8, SPI_CPOL_0, SPI_CPHA_1, SPI_MSB_FIRST);
     spi_set_slave(spi1, true);
     gpio_set_function(COMMS_SCLK, GPIO_FUNC_SPI);
     gpio_set_function(COMMS_MOSI, GPIO_FUNC_SPI);
