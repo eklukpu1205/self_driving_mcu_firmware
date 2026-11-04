@@ -1,27 +1,18 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include "spi_protocol.h"
 
-#define COMMS_CS 13
-#define COMMS_SCLK 10
-#define COMMS_MOSI 11
-#define COMMS_MISO 12
+// Jetson SPI0 master (header pins 19/21/23/24) -> MCU SPI1 slave.
+// GP12=RX (Jetson MOSI); GP11=TX (Jetson MISO). Common GND required.
+#define COMMS_CS   13u
+#define COMMS_SCLK 10u
+#define COMMS_MOSI 12u
+#define COMMS_MISO 11u
 
-
-typedef struct {
-    float target_speed;
-    float target_steering;
-    bool emergency_brake;
-    uint64_t timestamp_us;
-} NvidiaCommand;
-
-
-typedef struct {
-    float actual_speed;
-    float actual_steering;
-    bool emergency_brake;
-    uint64_t timestamp_us;
-} McuCommand;
-
+// ISR receives raw bytes into a software ring. No parsing/printf in ISR.
 void comms_spi_init(void);
-void comms_spi_exchange(NvidiaCommand* cmd_in, const McuCommand* cmd_out);
+bool comms_spi_read_byte(uint8_t *byte_out);
+uint32_t comms_spi_rx_byte_count(void);
+uint32_t comms_spi_hw_overrun_count(void);
+uint32_t comms_spi_ring_overrun_count(void);

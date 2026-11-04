@@ -2,6 +2,9 @@
 #include "hardware/pwm.h"
 #include "hardware/gpio.h"
 #include "hardware/i2c.h"
+#include <math.h>
+
+#include "hardware/clocks.h"
 
 // Pin Definitions 
 #define PIN_SERVO_PWM 14
@@ -14,7 +17,6 @@
 
 
 // PWM Timing Calculations (50 Hz)
-#define PWM_CLK_DIV 133.0f
 #define PWM_WRAP_50HZ 19999
 
 uint servo_slice;
@@ -29,7 +31,11 @@ void actuator_hal_init(void) {
 
     // Configure the PWM
     pwm_config config = pwm_get_default_config();
-    pwm_config_set_clkdiv(&config, PWM_CLK_DIV);
+    
+    uint32_t sys_clk = clock_get_hz(clk_sys);
+    float clk_div = (float) sys_clk / 1000000.0f;
+    
+    pwm_config_set_clkdiv(&config, clk_div);
     pwm_config_set_wrap(&config, PWM_WRAP_50HZ);
 
     // Load configuration into slices
@@ -46,7 +52,7 @@ void actuator_hal_init(void) {
 
 }
 
-void set_raw_pulse(uint pin, uint16_t pulse_width_us) {
+void set_raw_pulse(int pin, uint16_t pulse_width_us) {
     
     // Bound pulse control values
     if (pulse_width_us < PULSE_ABSOLUTE_MIN_US) {
@@ -60,33 +66,39 @@ void set_raw_pulse(uint pin, uint16_t pulse_width_us) {
     pwm_set_gpio_level(pin, pulse_width_us);
 }
 
-void actuator_hal_set_steering_rad(float angle_rad) {
+void actuator_hal_set_steering_pulse_us(uint16_t pulse_us) {
+    // Bound pulse control values to safe limits
+    if (pulse_us < PULSE_ABSOLUTE_MIN_US) {
+        pulse_us = PULSE_ABSOLUTE_MIN_US;
+    }
+    if (pulse_us > PULSE_ABSOLUTE_MAX_US) {
+        pulse_us = PULSE_ABSOLUTE_MAX_US;
+    }
     
-    // Clamp input metric to mechanical limits
-    if (angle_rad < STEERING_MIN_RAD){
-        angle_rad = STEERING_MIN_RAD;
-    }
-
-    if (angle_rad > STEERING_MAX_RAD) {
-        angle_rad = STEERING_MAX_RAD;
-    }
-
-    // Map radians to pulse width 
-    float normalized = angle_rad / STEERING_MAX_RAD; 
-    uint16_t pulse_us = (uint16_t) (PULSE_NEUTRAL_US + (normalized * (PULSE_SAFE_RIGHT_US - PULSE_NEUTRAL_US)));
-    
-    // Clamp control signal
-    if (pulse_us < PULSE_SAFE_LEFT_US){
-        pulse_us = PULSE_SAFE_LEFT_US;
-    }
-    if (pulse_us > PULSE_SAFE_RIGHT_US) {
-        pulse_us = PULSE_SAFE_RIGHT_US;
-    }
-
     set_raw_pulse(PIN_SERVO_PWM, pulse_us);
 }
 
-void actuator_hal_set_throttle_effort(float throttle_percent) {
+void move_steering(int *current, int target) {
+    while (*current != target) {
+        if (*current < target) {
+            *current += 5;
+            if (*current > target) *current = target;
+        } else {
+            *current -= 5;
+            if (*current < target) *current = target;
+        }
+
+        actuator_hal_set_steering_pulse_us((uint16_t)*current);
+        sleep_ms(5);
+    }
+}
+
+
+bool actuator_hal_set_throttle_effort(float throttle_percent) {
+
+    if (!isfinite(throttle_percent)) {
+        return false; //had to add this (eitan)
+    }
     
     // Utilize I2C to adjust the motor speed
     if (throttle_percent < -100.0f){
@@ -99,11 +111,12 @@ void actuator_hal_set_throttle_effort(float throttle_percent) {
 
     int8_t pwm_val = (int8_t) throttle_percent;
 
-    uint8_t motor_data[2];
-    motor_data[0] = MOTOR_PWM_ADDR;
-    motor_data[1] = (uint8_t) pwm_val;
+    uint8_t motor_data[5] = {MOTOR_PWM_ADDR, (uint8_t)(-pwm_val), 0, (uint8_t)(pwm_val), 0};
+ 
 
-    i2c_write_blocking(i2c0, HI_WONDER_I2C_ADDR, motor_data, 2, false);
+    int result = i2c_write_blocking(i2c0, HI_WONDER_I2C_ADDR, motor_data, sizeof(motor_data), false);
+
+    return result == (int)sizeof(motor_data);
 
 }
 
