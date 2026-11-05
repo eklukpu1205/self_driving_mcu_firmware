@@ -24,6 +24,7 @@ static const EncoderWheelConfig wheels[2] = {
 
 static bool tof_ready;
 static volatile bool tof_data_ready = false;
+static float cached_distance_m = NAN;
 
 // GPIO Interrupt Handler for ToF Sensor
 static void tof_gpio_isr(uint gpio, uint32_t events) {
@@ -90,49 +91,38 @@ static bool tof_init(void) {
     return model_id == 0xEE;
 }
 
-static bool tof_read_distance_mm(uint16_t *distance_mm) {
-    uint8_t range_data[2] = {0, 0};
-
-    // Trigger single shot measurement
-    if (!tof_write_register(0x00, 0x01)) {
-        return false;
-    }
-
-    // Reset interrupt flag and wait for the hardware interrupt
+// 1. Trigger the measurement (non-blocking)
+bool sensors_trigger_tof(void) {
+    if (!tof_ready) return false;
     tof_data_ready = false;
-    uint32_t start_time = time_us_32();
-    while (!tof_data_ready) {
-        if (time_us_32() - start_time > 50000u) { // 50ms timeout fallback
-            break; 
-        }
-        tight_loop_contents();
-    }
+    return tof_write_register(0x00, 0x01);
+}
+
+// 2. Expose the interrupt flag securely
+bool sensors_is_tof_ready(void) {
+    return tof_data_ready;
+}
+
+// 3. Fetch the data and clear the interrupt (non-blocking)
+bool sensors_fetch_tof(void) {
+    if (!tof_ready || !tof_data_ready) return false;
 
     uint8_t range_register = 0x1E;
+    uint8_t range_data[2] = {0, 0};
 
-    if (i2c_write_blocking(
-            TOF_I2C_BUS,
-            TOF_ADDRESS,
-            &range_register,
-            1,
-            true
-        ) < 0) {
+    if (i2c_write_blocking(TOF_I2C_BUS, TOF_ADDRESS, &range_register, 1, true) < 0) {
+        return false;
+    }
+    if (i2c_read_blocking(TOF_I2C_BUS, TOF_ADDRESS, range_data, 2, false) != 2) {
         return false;
     }
 
-    if (i2c_read_blocking(
-            TOF_I2C_BUS,
-            TOF_ADDRESS,
-            range_data,
-            2,
-            false
-        ) != 2) {
-        return false;
-    }
+    uint16_t distance_mm = ((uint16_t)range_data[0] << 8) | range_data[1];
+    cached_distance_m = (float)distance_mm / 1000.0f;
 
-    *distance_mm = ((uint16_t)range_data[0] << 8) | range_data[1];
-
+    // Clear the interrupt on the VL53L0X
     tof_write_register(0x0B, 0x01);
+    tof_data_ready = false; 
 
     return true;
 }
@@ -166,15 +156,9 @@ bool sensors_update(EncoderFeedback *out) {
     return have_delta;
 }
 
-// Existing teammate-owned radar placeholder.
+// Return the cached ToF distance instantly without blocking the control loop
 float sensors_get_radar_distance(void) {
-    uint16_t distance_mm = 0;
-
-    if (!tof_ready || !tof_read_distance_mm(&distance_mm)) {
-        return NAN;
-    }
-
-    return (float)distance_mm / 1000.0f;
+    return cached_distance_m;
 }
 
 // Compatibility accessor for future control; NAN propagates missing calibration.

@@ -39,6 +39,9 @@ int main(void) {
     // Initializes SPI1 and enables SPI1_IRQ background handler
     comms_spi_init(); 
 
+    // Kick off the very first ToF measurement
+    sensors_trigger_tof();
+
     // Start the 50 Hz hardware timer interrupt
     struct repeating_timer timer;
     add_repeating_timer_us(-LOOP_PERIOD_US, timer_50hz_callback, NULL, &timer);
@@ -55,6 +58,13 @@ int main(void) {
     EncoderFeedback wheel_feedback = {0}; 
 
     while (true) {
+       
+        // If the ToF GPIO interrupt fired, fetch the data and start the next reading immediately
+        if (sensors_is_tof_ready()) {
+            sensors_fetch_tof();
+            sensors_trigger_tof(); 
+        }
+
         // Read bytes from the ring buffer populated by SPI1_IRQ
         uint8_t b;
         while (comms_spi_read_byte(&b)) {
@@ -104,7 +114,7 @@ int main(void) {
             sensors_update(&wheel_feedback);
         }
 
-        // 3. Put CPU to sleep until the next interrupt 
+        // Put CPU to sleep until the next interrupt 
         tight_loop_contents();
     }
     return 0;
