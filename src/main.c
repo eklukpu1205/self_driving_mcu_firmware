@@ -99,13 +99,13 @@ int main(void) {
             bool system_safe = !safety_check(); 
 
             // Convert protocol units to actuators
-            float target_speed = (float)latest_cmd.target_speed_mm_s / 1000.0f;
-            float target_steering = (float)latest_cmd.target_steering_mrad;
+            float target_speed = (float)latest_cmd.target_motor_effort;
+            float target_steering = (float)latest_cmd.target_steering_pulse_us;
 
             // Execute movement commands if system is safe and valid data is present
             if (system_safe && have_command && !latest_cmd.emergency_brake && !command_timeout) {
-                actuator_set_speed(target_speed);
-                actuator_set_steering(target_steering);
+                actuator_hal_set_throttle_effort(target_speed);
+                actuator_hal_set_steering_pulse_us((uint16_t)target_steering);
             } else {
                 actuator_hal_emergency_halt(); 
             }
