@@ -3,7 +3,6 @@
 #include "hardware/gpio.h"
 #include "hardware/i2c.h"
 #include <math.h>
-
 #include "hardware/clocks.h"
 
 // Pin Definitions 
@@ -14,15 +13,12 @@
 #define HI_WONDER_I2C_ADDR 0x34 // The motor driver module address
 #define MOTOR_PWM_ADDR 0x1F
 
-
-
 // PWM Timing Calculations (50 Hz)
 #define PWM_WRAP_50HZ 19999
 
 uint servo_slice;
 
 void actuator_hal_init(void) {
-   
     // Assign pins to the PWM peripheral function
     gpio_set_function(PIN_SERVO_PWM, GPIO_FUNC_PWM);
 
@@ -49,11 +45,9 @@ void actuator_hal_init(void) {
 
     // Setup I2C communication with the motor driver
     i2c_comm_setup();
-
 }
 
 void set_raw_pulse(int pin, uint16_t pulse_width_us) {
-    
     // Bound pulse control values
     if (pulse_width_us < PULSE_ABSOLUTE_MIN_US) {
         pulse_width_us = PULSE_ABSOLUTE_MIN_US;
@@ -78,7 +72,29 @@ void actuator_hal_set_steering_pulse_us(uint16_t pulse_us) {
     set_raw_pulse(PIN_SERVO_PWM, pulse_us);
 }
 
-void move_steering(int *current, int target) {
+bool actuator_hal_set_steering_angle_deg(float angle_deg) {
+    if (!isfinite(angle_deg)) {
+        return false;
+    }
+
+    if (angle_deg < 0.0f) angle_deg = 0.0f;
+    if (angle_deg > 180.0f) angle_deg = 180.0f;
+
+    // Use the existing pulse limits
+    float pulse_us;
+    if (angle_deg <= 90.0f) {
+        pulse_us = PULSE_ABSOLUTE_MIN_US + (angle_deg / 90.0f) *
+            (PULSE_NEUTRAL_US - PULSE_ABSOLUTE_MIN_US);
+    } else {
+        pulse_us = PULSE_NEUTRAL_US + ((angle_deg - 90.0f) / 90.0f) *
+            (PULSE_ABSOLUTE_MAX_US - PULSE_NEUTRAL_US);
+    }
+
+    actuator_hal_set_steering_pulse_us((uint16_t)lroundf(pulse_us));
+    return true;
+}
+
+static void move_steering(int *current, int target) {
     while (*current != target) {
         if (*current < target) {
             *current += 5;
@@ -93,9 +109,7 @@ void move_steering(int *current, int target) {
     }
 }
 
-
 bool actuator_hal_set_throttle_effort(float throttle_percent) {
-
     if (!isfinite(throttle_percent)) {
         return false; //had to add this (eitan)
     }
@@ -108,31 +122,25 @@ bool actuator_hal_set_throttle_effort(float throttle_percent) {
         throttle_percent = 100.0f;
     }
 
-
     int8_t pwm_val = (int8_t) throttle_percent;
 
     uint8_t motor_data[5] = {MOTOR_PWM_ADDR, (uint8_t)(-pwm_val), 0, (uint8_t)(pwm_val), 0};
- 
 
-    int result = i2c_write_blocking(i2c0, HI_WONDER_I2C_ADDR, motor_data, sizeof(motor_data), false);
+    int result = i2c_write_timeout_us(i2c0, HI_WONDER_I2C_ADDR,
+                                    motor_data, sizeof(motor_data), false, 3000);
 
     return result == (int)sizeof(motor_data);
-
 }
 
 void actuator_hal_emergency_halt(void) {
-    
     // Sets the steering to neutral state
     set_raw_pulse(PIN_SERVO_PWM, PULSE_NEUTRAL_US);
 
     // Add control signal to set the motor speed to neutral
     actuator_hal_set_throttle_effort(0);
-   
-
 }
 
 void i2c_comm_setup(void) {
-
     //Initializes the I2C communication
     i2c_init(i2c0, 100000);
 
@@ -141,5 +149,4 @@ void i2c_comm_setup(void) {
 
     gpio_pull_up(MOTOR_I2C_SCL_PIN);
     gpio_pull_up(MOTOR_I2C_SDA_PIN);
-
 }

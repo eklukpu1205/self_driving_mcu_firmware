@@ -16,7 +16,6 @@
 
 
 void actuator_hal_init(void);
-void move_steering(int*, int);
 void i2c_comm_setup(void);
 void set_raw_pulse(int pin, uint16_t pulse_width_us);
 void actuator_hal_set_steering_pulse_us(uint16_t pulse_us); 

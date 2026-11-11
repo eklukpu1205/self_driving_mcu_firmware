@@ -1,4 +1,3 @@
-// safety_arbitration.c
 #include "safety_arbitration.h"
 #include "sensor_interface.h"
 #include "actuator_hal.h"
@@ -19,4 +18,3 @@ bool safety_check(void) {
 
     return false;
 }
-
