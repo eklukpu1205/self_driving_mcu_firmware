@@ -86,7 +86,7 @@ bool actuator_hal_set_steering_angle_deg(float angle_deg) {
     if (angle_deg < 0.0f) angle_deg = 0.0f;
     if (angle_deg > 180.0f) angle_deg = 180.0f;
 
-    // Use the existing pulse limits and neutral setting.
+    // Use the existing pulse limits
     float pulse_us;
     if (angle_deg <= 90.0f) {
         pulse_us = PULSE_ABSOLUTE_MIN_US + (angle_deg / 90.0f) *

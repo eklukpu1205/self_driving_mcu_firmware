@@ -1,483 +1,420 @@
-#include "pico/stdlib.h"
-#include "hardware/spi.h"
+// =====================================================================
+//  Drive + Steer + I2C diagnostic test  —  Purdue Proton (RP2350)
+//  Scale Autonomous Vehicle Testbed
+//
+//  Drop in as src/main.c, build with the `proton` env, upload via
+//  picoprobe, open serial monitor at 115200. Press 'h' for help.
+//
+//  SAFETY: wheels raised for first runs, motor power cutoff in reach.
+//  Every drive command is a timed burst that ends with a forced stop.
+// =====================================================================
 #include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+#include "pico/stdlib.h"
+#include "hardware/i2c.h"
+#include "hardware/pwm.h"
+#include "hardware/clocks.h"
+#include "hardware/gpio.h"
 
-// Include subsystem headers
-#include "comms_spi.h"
-#include "safety_arbitration.h"
-#include "sensor_interface.h"
-#include "actuator_hal.h"
-#include "encoder_feedback.h"
-#include "hiwonder_driver.h"
+// ---------------- Pins (Proton bench wiring) ----------------
+#define MOTOR_I2C   i2c0
+#define MOTOR_SDA   4
+#define MOTOR_SCL   5
+#define TOF_I2C     i2c1
+#define TOF_SDA     6
+#define TOF_SCL     7
+#define SERVO_PIN   14
 
-#define LOOP_PERIOD_US 20000 // 50 Hz
+// ---------------- Hiwonder 4-ch encoder motor driver ----------------
+#define HW_ADDR           0x34
+#define HW_REG_BATTERY    0x00   // 2 bytes, millivolts, little-endian
+#define HW_REG_FIXED_PWM  0x1F   // 4 x int8 effort, -100..100 (M1..M4)
+#define HW_REG_ENCODER    0x3C   // 4 x int32 total encoder counts
+#define HW_REG_MOTOR_TYPE 0x14   // 0 none, 1 TT, 2 N20, 3 JGB37-520
+#define HW_REG_SPEED      0x33   // 4 x int8, closed-loop speed (uses encoders)
+#define LEFT_IDX    0            // M1
+#define RIGHT_IDX   2            // M3
+#define LEFT_SIGN   (-1)         // flip a sign if that wheel spins backwards
+#define RIGHT_SIGN  (+1)
 
+// ---------------- VL53L0X ----------------
+#define TOF_ADDR    0x29
+#define TOF_REG_ID  0xC0         // model ID, expect 0xEE
 
+// ---------------- Limits ----------------
+#define EFFORT_DEFAULT   15
+#define EFFORT_MAX       40
+#define EFFORT_STEP      5
+#define BURST_MS         1000
+#define REFRESH_MS       100
+#define I2C_TIMEOUT_US   10000
 
-/* STEERING TEST LOOP
+#define SERVO_CENTER_US  1500
+#define SERVO_MIN_US     1100    // conservative with linkage attached
+#define SERVO_MAX_US     1900
+#define SERVO_STEP_US    100
+#define TURN_OFFSET_US   300
 
+static int      g_effort    = EFFORT_DEFAULT;
+static int      g_center_us = SERVO_CENTER_US;
+static int      g_servo_us  = SERVO_CENTER_US;
+static uint     g_motor_baud = 100000;
+static bool     g_closed_loop = false;   // false: 0x1F open-loop PWM, true: 0x33 speed
+static uint8_t  g_motor_type = 0;   // 0 = the only type that drove the wheels with PWM 0x1F
 
-
-int main(void) {
-    stdio_init_all();
-    sleep_ms(3000);
-    actuator_hal_init();
-
-    int current = 1500;
-    actuator_hal_set_steering_pulse_us(current);
-    sleep_ms(1000);
-
-    while (true) {
-        printf("Move to 700\n");
-        move_steering(&current, 700);
-        sleep_ms(1000);
-
-        printf("Move to center\n");
-        move_steering(&current, 1500);
-        sleep_ms(1000);
-
-        printf("Move to 2300\n");
-        move_steering(&current, 2300);
-        sleep_ms(1000);
-
-        printf("Move to center\n");
-        move_steering(&current, 1500);
-        sleep_ms(1000);
-    }
-}
-*/
-
-
-
-
-
-
-/* MOTOR TEST LOOP
-
-// Define test timing parameters
-#define TEST_DELAY_MS 2000
-
-void test_motor_constant_velocity() {
-    printf("\nMotor Test\n");
-    
-    float test_speed = 50.0f; 
-    
-    printf("Setting motor to %.1f%% effort\n", test_speed);
-    int test_duration_ms = TEST_DELAY_MS * 2; 
-    int iterations = test_duration_ms / 20; 
-    
-    for (int i = 0; i < iterations; i++) {
-        actuator_hal_set_throttle_effort(test_speed);
-        sleep_ms(20);
-    }
-    actuator_hal_set_throttle_effort(0.0f);
-    
-    // Hold constant velocity
-    sleep_ms(TEST_DELAY_MS * 2);
+// =====================================================================
+//  I2C helpers
+// =====================================================================
+static const char *i2c_err_str(int r) {
+    if (r == PICO_ERROR_GENERIC) return "NACK: nobody answered (driver power, GND, SDA/SCL swapped, wrong address)";
+    if (r == PICO_ERROR_TIMEOUT) return "TIMEOUT: bus stuck (line held low, no pull-ups, shifter LV/HV unpowered)";
+    return "unknown error";
 }
 
-void test_motor_emergency_halt() {
-    printf("\nEmergency Stop Test\n");
-
-    
-    for (int i = 0; i < 250; i++) {
-        actuator_hal_set_throttle_effort(50.0f);
-        sleep_ms(20);
-    }
-    
-    uint64_t stop_start_time = time_us_64();
-    
-    // Trigger emergency stop 
-    actuator_hal_emergency_halt();
-    
-    uint64_t stop_end_time = time_us_64();
-    uint64_t elapsed_time = stop_end_time - stop_start_time;
-    
-    printf("Emergency halt executed. Execution time: %.10f us\n", elapsed_time);
-    
-    sleep_ms(TEST_DELAY_MS);
+static void i2c_setup(i2c_inst_t *i2c, uint sda, uint scl, uint baud) {
+    i2c_deinit(i2c);
+    uint actual = i2c_init(i2c, baud);
+    gpio_set_function(sda, GPIO_FUNC_I2C);
+    gpio_set_function(scl, GPIO_FUNC_I2C);
+    gpio_pull_up(sda);
+    gpio_pull_up(scl);
+    printf("  I2C%d on SDA=GPIO%u SCL=GPIO%u @ %u Hz\n", i2c_hw_index(i2c), sda, scl, actual);
 }
 
-void test_motor_ramp() {
-    printf("\nMotor Ramp Test\n");
-
-    // Gradually ramp up motor speed
-    for (float speed = 0.0f; speed <= 100.0f; speed += 10.0f) {
-        printf("Ramping up: %.1f%%\n", speed);
-       
-        for (int i = 0; i < 25; i++) {
-            actuator_hal_set_throttle_effort(speed);
-            sleep_ms(20);
-        }
-    }
-    
-    // Gradually ramp down
-    for (float speed = 100.0f; speed >= 0.0f; speed -= 10.0f) {
-        printf("Ramping down: %.1f%%\n", speed);
-        
-        for (int i = 0; i < 25; i++) {
-            actuator_hal_set_throttle_effort(speed);
-            sleep_ms(20);
-        }
-    }
-    actuator_hal_set_throttle_effort(0.0f);
+static int reg_write(i2c_inst_t *i2c, uint8_t addr, uint8_t reg,
+                     const uint8_t *data, size_t len) {
+    uint8_t buf[17];
+    if (len > 16) return PICO_ERROR_GENERIC;
+    buf[0] = reg;
+    memcpy(buf + 1, data, len);
+    int r = i2c_write_timeout_us(i2c, addr, buf, len + 1, false, I2C_TIMEOUT_US);
+    if (r == (int)(len + 1)) return 0;
+    return r < 0 ? r : PICO_ERROR_GENERIC;
 }
 
-int main(void) {
-    stdio_init_all();
-    
-    sleep_ms(3000); 
-    
-    printf("Starting Motor Drive Test\n");
-    
-    actuator_hal_init();
-
-    while (true) {
-        test_motor_constant_velocity();
-        test_motor_emergency_halt();
-        test_motor_ramp();
-        
-        printf("\nTEST SEQUENCE COMPLETE\n");
-        sleep_ms(5000);
-    }
-    
+// Hiwonder expects STOP between register write and read (like Arduino
+// Wire endTransmission + requestFrom) -> repeated_start = false.
+static int reg_read(i2c_inst_t *i2c, uint8_t addr, uint8_t reg,
+                    uint8_t *out, size_t len, bool repeated_start) {
+    int r = i2c_write_timeout_us(i2c, addr, &reg, 1, repeated_start, I2C_TIMEOUT_US);
+    if (r != 1) return r < 0 ? r : PICO_ERROR_GENERIC;
+    r = i2c_read_timeout_us(i2c, addr, out, len, false, I2C_TIMEOUT_US);
+    if (r != (int)len) return r < 0 ? r : PICO_ERROR_GENERIC;
     return 0;
 }
 
-*/
+// Read SDA/SCL as plain inputs. pulls=false reveals external pull-ups.
+static void read_lines(uint sda, uint scl, bool pulls, bool *sda_hi, bool *scl_hi) {
+    gpio_init(sda);
+    gpio_init(scl);
+    if (pulls) { gpio_pull_up(sda); gpio_pull_up(scl); }
+    else       { gpio_disable_pulls(sda); gpio_disable_pulls(scl); }
+    sleep_us(500);
+    *sda_hi = gpio_get(sda);
+    *scl_hi = gpio_get(scl);
+}
 
+static void line_check(i2c_inst_t *i2c, uint sda, uint scl, uint baud, const char *name) {
+    bool sda_np, scl_np, sda_p, scl_p;
+    read_lines(sda, scl, false, &sda_np, &scl_np);
+    read_lines(sda, scl, true,  &sda_p,  &scl_p);
+    printf("[%s] idle lines  no-pulls: SDA=%d SCL=%d | internal pull-ups: SDA=%d SCL=%d\n",
+           name, sda_np, scl_np, sda_p, scl_p);
+    if (sda_np && scl_np)
+        printf("  OK: external pull-ups present, bus idle high.\n");
+    else if (sda_p && scl_p)
+        printf("  WARN: no external pull-ups on Proton side (shifter LV not powered at 3V3?).\n"
+               "        Internal ~50k pull-ups only -> unreliable. Check shifter LV/HV/GND.\n");
+    else
+        printf("  FAIL: %s%s held LOW even with pull-ups -> short to GND, unpowered shifter,\n"
+               "        or a stuck device. Try 'r' (bus recovery), then re-check wiring.\n",
+               sda_p ? "" : "SDA ", scl_p ? "" : "SCL ");
+    i2c_setup(i2c, sda, scl, baud);
+}
 
-
-
-// EMERGENCY BRAKING TEST LOOP
-
-// Define test timing parameters
-// #define TEST_DELAY_MS 2000
-
-// void test_motor_constant_velocity() {
-    
-    
-//     float test_speed = 50.0f; 
-    
-//     printf("Setting motor to %.1f%% effort\n", test_speed);
-//     int test_duration_ms = TEST_DELAY_MS * 2; 
-//     int iterations = test_duration_ms / 20; 
-    
-//     for (int i = 0; i < iterations; i++) {
-//         actuator_hal_set_throttle_effort(test_speed);
-//         //safety_check();
-//         sleep_ms(20);
-//     }
-//     actuator_hal_set_throttle_effort(0.0f);
-    
-//     // Hold constant velocity
-//     sleep_ms(TEST_DELAY_MS * 2);
-// }
-
-// static bool emergency_stop_latched = false;
-// void test_motor_constant_velocity(void) {
-//     const float test_speed = 50.0f;
-//     const int iterations = 200;
-
-//     for (int i = 0; i < iterations; i++) {
-//         if (emergency_stop_latched || safety_check()) {
-//             actuator_hal_emergency_halt();
-//             emergency_stop_latched = true;
-
-//             printf("Emergency braking triggered by ToF\n");
-//             return;
-//         }
-
-//         actuator_hal_set_throttle_effort(test_speed);
-//         sleep_ms(20);
-//     }
-
-//     actuator_hal_set_throttle_effort(0.0f);
-// }
-
-// #include <math.h>
-
-// static bool emergency_stop_latched = false;
-
-// void test_motor_constant_velocity(void) {
-//     const float test_effort = 50.0f;
-
-//     for (int i = 0; i < 200; i++) {
-//         uint64_t start_us = time_us_64();
-//         float distance_m = sensors_get_radar_distance();
-//         uint64_t elapsed_us = time_us_64() - start_us;
-
-//         printf("ToF: %.3f m | read time: %llu us\n",
-//                (double)distance_m,
-//                (unsigned long long)elapsed_us);
-
-//         if (!isfinite(distance_m) || distance_m <= 0.0f ||
-//             distance_m < 0.5f) {
-//             actuator_hal_emergency_halt();
-//             emergency_stop_latched = true;
-//             printf("STOP: close object or invalid sensor reading\n");
-//             return;
-//         }
-
-//         actuator_hal_set_throttle_effort(test_effort);
-//         sleep_ms(20);
-//     }
-
-//     actuator_hal_set_throttle_effort(0.0f);
-// }
-
-// int main(void) {
-//     stdio_init_all();
-    
-//     sleep_ms(3000);
-    
-//     printf("\nEmergency Brake Test\n");
-//     sensors_init();
-    
-//     actuator_hal_init();
-
-//    while (true) {
-//     test_motor_constant_velocity();
-
-//     if (emergency_stop_latched) {
-//         printf("Motor remains stopped. Reset the MCU.\n");
-
-//         while (true) {
-//             sleep_ms(1000);
-//         }
-//     }
-
-//     sleep_ms(1000);
-// }
-    
-//     return 0;
-// }
-
-// int main(void) {
-//     stdio_init_all();
-//     actuator_hal_init();
-//     actuator_hal_emergency_halt();
-//     sleep_ms(3000);
-//     printf("\nToF motor bench test: lift wheels before powering motors.\n");
-//     sensors_init();
-
-//     // Bench-test allowance for intermittent missed measurements.
-//     const uint64_t stale_limit_us = 1000000u;
-//     uint64_t last_valid_us = 0;
-//     const uint64_t startup_deadline = time_us_64() + 5000000u;
-//     bool armed = false;
-//     // Wait while stopped for one valid clear reading. Invalid samples can recover.
-//     while (time_us_64() < startup_deadline) {
-//         float distance_m = sensors_get_radar_distance();
-//         printf("Startup distance: %.3f m\n", (double)distance_m);
-//         if (isfinite(distance_m) && distance_m <= 1.0f) {
-//             emergency_stop_latched = true;
-//             printf("STOP: object within 1.0 m.\n");
-//             break;
-//         }
-//         if (isfinite(distance_m)) {
-//             last_valid_us = time_us_64();
-//             armed = true;
-//             break;
-//         }
-//         sleep_ms(20);
-//     }
-//     if (!armed) emergency_stop_latched = true;
-
-//     const uint64_t test_start_us = time_us_64();
-//     // One run, at 50 percent effort, lasting at most ten seconds.
-//     while (!emergency_stop_latched &&
-//            time_us_64() - test_start_us < 10000000u) {
-//         float distance_m = sensors_get_radar_distance();
-//         uint64_t now_us = time_us_64();
-//         if (isfinite(distance_m)) last_valid_us = now_us;
-//         if (now_us - last_valid_us > stale_limit_us) {
-//             actuator_hal_emergency_halt();
-//             emergency_stop_latched = true;
-//             printf("STOP: sensor unavailable for 1 second.\n");
-//             break;
-//         }
-//         if (isfinite(distance_m) && distance_m <= 1.0f) {
-//             actuator_hal_emergency_halt();
-//             emergency_stop_latched = true;
-//             printf("STOP: ToF %.3f m (close object or invalid reading).\n",
-//                    (double)distance_m);
-//             break;
-//         }
-//         if (!actuator_hal_set_throttle_effort(50.0f)) {
-//             actuator_hal_emergency_halt();
-//             emergency_stop_latched = true;
-//             printf("STOP: motor command failed.\n");
-//             break;
-//         }
-//         printf("ToF: %.3f m | motor effort: 50 percent\n", (double)distance_m);
-//         sleep_ms(20);
-//     }
-
-//     actuator_hal_emergency_halt();
-//     printf("Test stopped. Reset MCU to run again.\n");
-//     while (true) {
-//         // Repeat zero commands; never automatically restart the motors.
-//         actuator_hal_set_throttle_effort(0.0f);
-//         sleep_ms(100);
-//     }
-// }
-
-
-#include "pico/stdlib.h"
-#include "hardware/spi.h"
-#include "hardware/regs/spi.h"
-#include "comms_spi.h"
-
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-
-// Parse and print one complete command.
-// Returns true only when all four fields are valid.
-static bool print_command(const char *line) {
-    int sequence;
-    int speed;
-    int steering;
-    int brake;
-    char extra;
-
-    // Width limits keep malformed numbers small enough for int.
-    // A fifth character means unwanted data followed the four fields.
-    const int fields = sscanf(
-        line,
-        "%5d,%4d,%4d,%1d%c",
-        &sequence,
-        &speed,
-        &steering,
-        &brake,
-        &extra
-    );
-
-    if (fields != 4) {
-        return false;
+// Clock out a device stuck mid-byte holding SDA low, then send STOP.
+static void bus_recover(i2c_inst_t *i2c, uint sda, uint scl, uint baud, const char *name) {
+    gpio_init(sda); gpio_init(scl);
+    gpio_pull_up(sda); gpio_pull_up(scl);
+    gpio_put(sda, 0); gpio_put(scl, 0);          // output value low; dir controls open-drain
+    gpio_set_dir(sda, GPIO_IN);
+    for (int i = 0; i < 9; i++) {
+        gpio_set_dir(scl, GPIO_OUT); sleep_us(10);  // SCL low
+        gpio_set_dir(scl, GPIO_IN);  sleep_us(10);  // SCL released
     }
+    // STOP: SDA low while SCL low, release SCL, then release SDA
+    gpio_set_dir(scl, GPIO_OUT); sleep_us(10);
+    gpio_set_dir(sda, GPIO_OUT); sleep_us(10);
+    gpio_set_dir(scl, GPIO_IN);  sleep_us(10);
+    gpio_set_dir(sda, GPIO_IN);  sleep_us(10);
+    printf("[%s] recovery done: SDA=%d SCL=%d (both should be 1)\n",
+           name, gpio_get(sda), gpio_get(scl));
+    i2c_setup(i2c, sda, scl, baud);
+}
 
-    // Demonstration ranges, not calibrated actuator limits.
-    if (sequence < 0 || sequence > 65535 ||
-        speed < -500 || speed > 500 ||
-        steering < -450 || steering > 450 ||
-        (brake != 0 && brake != 1)) {
-        return false;
+static void i2c_scan(i2c_inst_t *i2c, const char *name) {
+    printf("[%s] scanning 0x08-0x77...\n", name);
+    int found = 0;
+    for (int a = 0x08; a < 0x78; a++) {
+        uint8_t d;
+        int r = i2c_read_timeout_us(i2c, a, &d, 1, false, 3000);
+        if (r >= 0) { printf("  found 0x%02X\n", a); found++; }
+        else if (r == PICO_ERROR_TIMEOUT) {
+            printf("  TIMEOUT at 0x%02X -> bus stuck, abort scan. Try 'r'.\n", a);
+            return;
+        }
     }
+    printf("  %d device(s) found%s\n", found, found ? "" : " -> check power/GND/SDA-SCL/shifter");
+}
 
-    printf(
-        "[RX] seq=%d speed_mm_s=%d steering_mrad=%d brake=%d\n",
-        sequence,
-        speed,
-        steering,
-        brake
-    );
+// =====================================================================
+//  Motor driver
+// =====================================================================
+static int motor_set(int left, int right) {
+    int8_t v[4] = {0, 0, 0, 0};
+    v[LEFT_IDX]  = (int8_t)(LEFT_SIGN  * left);
+    v[RIGHT_IDX] = (int8_t)(RIGHT_SIGN * right);
+    uint8_t reg = g_closed_loop ? HW_REG_SPEED : HW_REG_FIXED_PWM;
+    return reg_write(MOTOR_I2C, HW_ADDR, reg, (const uint8_t *)v, 4);
+}
 
-    // Stage 2 can later pass validated values through safety/control.
-    // No motor or servo commands are issued in this demonstration.
-    return true;
+// Zero BOTH control registers so switching modes can never leave one running.
+static int motor_zero_all(void) {
+    int8_t z[4] = {0, 0, 0, 0};
+    int r1 = reg_write(MOTOR_I2C, HW_ADDR, HW_REG_FIXED_PWM, (const uint8_t *)z, 4);
+    int r2 = reg_write(MOTOR_I2C, HW_ADDR, HW_REG_SPEED,     (const uint8_t *)z, 4);
+    return r1 ? r1 : r2;
+}
+
+static bool motor_stop_hard(void) {
+    for (int i = 0; i < 5; i++) {
+        if (motor_zero_all() == 0) return true;
+        sleep_ms(20);
+    }
+    printf("!!! COULD NOT CONFIRM STOP — CUT MOTOR POWER !!!\n");
+    return false;
+}
+
+static int read_battery_mv(int *mv) {
+    uint8_t b[2];
+    int r = reg_read(MOTOR_I2C, HW_ADDR, HW_REG_BATTERY, b, 2, false);
+    if (r == 0) *mv = b[0] | (b[1] << 8);
+    return r;
+}
+
+static int read_encoders(int32_t enc[4]) {
+    uint8_t b[16];
+    int r = reg_read(MOTOR_I2C, HW_ADDR, HW_REG_ENCODER, b, 16, false);
+    if (r == 0) memcpy(enc, b, 16);
+    return r;
+}
+
+// Startup handshake: keep sending stop until the driver ACKs.
+static bool motor_connect(int tries) {
+    for (int i = 1; i <= tries; i++) {
+        int r = motor_set(0, 0);
+        if (r == 0) {
+            printf("Motor driver 0x34 ACKed zero-effort (try %d).\n", i);
+            int rt = reg_write(MOTOR_I2C, HW_ADDR, HW_REG_MOTOR_TYPE, &g_motor_type, 1);
+            printf("Motor type -> %d at startup: %s\n", g_motor_type, rt == 0 ? "OK" : i2c_err_str(rt));
+            return true;
+        }
+        printf("  try %d/%d: %d %s\n", i, tries, r, i2c_err_str(r));
+        sleep_ms(250);
+    }
+    return false;
+}
+
+static void motor_health(void) {
+    printf("---- Motor I2C health ----\n");
+    line_check(MOTOR_I2C, MOTOR_SDA, MOTOR_SCL, g_motor_baud, "motor");
+    int mv, r;
+    r = read_battery_mv(&mv);
+    if (r == 0) printf("Battery (driver ADC): %d mV%s\n", mv,
+                       mv < 9000 ? "  <- LOW or driver battery not on" : "");
+    else        printf("Battery read FAILED: %d %s\n", r, i2c_err_str(r));
+    r = motor_set(0, 0);
+    printf("Zero-effort write: %s\n", r == 0 ? "OK" : i2c_err_str(r));
+    int32_t e[4];
+    r = read_encoders(e);
+    if (r == 0) printf("Encoders M1..M4: %ld %ld %ld %ld\n",
+                       (long)e[0], (long)e[1], (long)e[2], (long)e[3]);
+    else        printf("Encoder read FAILED: %d %s\n", r, i2c_err_str(r));
+}
+
+// 200 reads in a row: catches loose wires / intermittent -1.
+static void motor_stress(void) {
+    int ok = 0, nack = 0, tmo = 0, mv;
+    printf("Stress: 200 battery reads (wiggle the wires while this runs)...\n");
+    for (int i = 0; i < 200; i++) {
+        int r = read_battery_mv(&mv);
+        if (r == 0) ok++;
+        else if (r == PICO_ERROR_TIMEOUT) tmo++;
+        else nack++;
+        sleep_ms(10);
+    }
+    printf("  OK=%d  NACK=%d  TIMEOUT=%d  -> %s\n", ok, nack, tmo,
+           ok == 200 ? "bus solid" :
+           ok == 0   ? "bus dead, run 'i'" : "INTERMITTENT: loose wire/ground or bad breadboard row");
+}
+
+// =====================================================================
+//  Servo
+// =====================================================================
+static void servo_write(int us) {
+    if (us < SERVO_MIN_US) us = SERVO_MIN_US;
+    if (us > SERVO_MAX_US) us = SERVO_MAX_US;
+    g_servo_us = us;
+    pwm_set_gpio_level(SERVO_PIN, (uint16_t)us);   // 1 tick = 1 us
+    printf("Servo: %d us (center %d)\n", us, g_center_us);
+}
+
+static void servo_init(void) {
+    gpio_set_function(SERVO_PIN, GPIO_FUNC_PWM);
+    uint slice = pwm_gpio_to_slice_num(SERVO_PIN);
+    pwm_config cfg = pwm_get_default_config();
+    pwm_config_set_clkdiv(&cfg, (float)clock_get_hz(clk_sys) / 1000000.0f); // 1 MHz
+    pwm_config_set_wrap(&cfg, 19999);                                       // 20 ms = 50 Hz
+    pwm_init(slice, &cfg, false);
+    pwm_set_gpio_level(SERVO_PIN, SERVO_CENTER_US);
+    pwm_set_enabled(slice, true);
+    g_servo_us = SERVO_CENTER_US;
+}
+
+// =====================================================================
+//  ToF quick check (presence + ID only)
+// =====================================================================
+static void tof_check(void) {
+    uint8_t id = 0;
+    int r = reg_read(TOF_I2C, TOF_ADDR, TOF_REG_ID, &id, 1, true);
+    if (r == 0) printf("VL53L0X ID = 0x%02X %s\n", id, id == 0xEE ? "(OK)" : "(unexpected!)");
+    else        printf("VL53L0X read FAILED: %d %s\n", r, i2c_err_str(r));
+}
+
+// =====================================================================
+//  Drive burst
+// =====================================================================
+static void drive_burst(int left, int right, int servo_us, bool recenter, const char *label) {
+    int r = motor_set(0, 0);
+    if (r) { printf("Drive refused, driver not answering: %s. Run 'i'.\n", i2c_err_str(r)); return; }
+
+    servo_write(servo_us);
+    sleep_ms(150);                       // let steering settle first
+
+    int32_t e0[4], e1[4];
+    bool enc_ok = (read_encoders(e0) == 0);
+
+    printf(">> %s  L=%d R=%d for %d ms  mode=%s  (x/space = stop)\n", label, left, right,
+           BURST_MS, g_closed_loop ? "SPEED 0x33" : "PWM 0x1F");
+    printf("   t(ms)  batt(mV)   M1     M3\n");
+    absolute_time_t start = get_absolute_time();
+    absolute_time_t end = make_timeout_time_ms(BURST_MS);
+    int sends = 0;
+    while (!time_reached(end)) {
+        r = motor_set(left, right);
+        if (r) { printf("I2C error mid-burst after %d sends: %d %s\n", sends, r, i2c_err_str(r)); break; }
+        sends++;
+        int mv = -1; int32_t e[4] = {0};
+        read_battery_mv(&mv);
+        bool eok = (read_encoders(e) == 0);
+        // newlib-nano printf has no %lld -> cast everything to int
+        printf("   %5d  %6d  %6d %6d\n",
+               (int)(absolute_time_diff_us(start, get_absolute_time()) / 1000), mv,
+               eok ? (int)(e[LEFT_IDX]  - e0[LEFT_IDX])  : 0,
+               eok ? (int)(e[RIGHT_IDX] - e0[RIGHT_IDX]) : 0);
+        int c = getchar_timeout_us(0);
+        if (c == 'x' || c == ' ') { printf("Stopped by user.\n"); break; }
+        sleep_ms(REFRESH_MS);
+    }
+    motor_stop_hard();
+    printf("<< stop sent (%d commands OK)\n", sends);
+
+    if (enc_ok && read_encoders(e1) == 0)
+        printf("Encoder delta  M1=%ld  M3=%ld  (0 = wheel did not turn or no encoder)\n",
+               (long)(e1[LEFT_IDX] - e0[LEFT_IDX]), (long)(e1[RIGHT_IDX] - e0[RIGHT_IDX]));
+    if (recenter) servo_write(g_center_us);
+}
+
+// =====================================================================
+//  UI
+// =====================================================================
+static void help(void) {
+    printf("\n=========== DRIVE / STEER / I2C TEST ===========\n"
+           " I2C:   s scan both buses   i motor health   p stress test\n"
+           "        r bus recovery      f toggle motor I2C 100k/50k   t ToF ID\n"
+           " Motor: m cycle motor type (now %d)   v toggle PWM 0x1F / SPEED 0x33 (now %s)\n"
+           " Drive: w forward  b backward  q fwd+left  e fwd+right  (%d ms bursts)\n"
+           "        + / - effort (now %d%%, max %d%%)   x or SPACE stop\n"
+           " Steer: a left  d right  c center  C set current as center\n"
+           " Wheels RAISED for first runs. Keep motor power cutoff in reach.\n"
+           "================================================\n",
+           g_motor_type, g_closed_loop ? "SPEED" : "PWM", BURST_MS, g_effort, EFFORT_MAX);
 }
 
 int main(void) {
-    // Use the existing working standard-output configuration.
     stdio_init_all();
-    sleep_ms(3000);
+    servo_init();                        // servo centered immediately
+    sleep_ms(2000);                      // time to open the serial monitor
+    printf("\nBoot. Setting up I2C...\n");
 
-    printf("\nStarting SPI receiver...\n");
-    fflush(stdout);
-    // Existing function configures SPI1 slave on GPIO10/11/12/13.
-    comms_spi_init();
+    i2c_setup(MOTOR_I2C, MOTOR_SDA, MOTOR_SCL, g_motor_baud);
+    i2c_setup(TOF_I2C, TOF_SDA, TOF_SCL, 100000);
 
-    spi_set_format(
-        spi1,
-        8,
-        SPI_CPOL_0,
-        SPI_CPHA_1,
-        SPI_MSB_FIRST
-    );
+    line_check(MOTOR_I2C, MOTOR_SDA, MOTOR_SCL, g_motor_baud, "motor");
+    i2c_scan(MOTOR_I2C, "motor i2c0");
+    i2c_scan(TOF_I2C,   "tof i2c1");
 
-    printf("SPI CR0=0x%08lX CR1=0x%08lX\n",
-       (unsigned long)spi_get_hw(spi1)->cr0,
-       (unsigned long)spi_get_hw(spi1)->cr1);
-
-    char line[64];
-    unsigned int used = 0;
-
-    bool discard_line = false;
-    bool timeout_reported = false;
-
-    uint64_t last_byte_us = time_us_64();
-    uint64_t last_valid_us = last_byte_us;
-
-    printf("\nSPI RECEIVER READY - ACTUATORS DISABLED\n");
-    printf("SCK=GPIO10, MOSI/RX=GPIO12, CS=GPIO13\n");
+    if (!motor_connect(20))
+        printf("Motor driver NOT responding. Turn on chassis battery, then press 'i'.\n");
+    help();
 
     while (true) {
-        // Detect receive-FIFO overflow and discard the damaged line.
-        if (spi_get_hw(spi1)->ris & SPI_SSPRIS_RORRIS_BITS) {
-            spi_get_hw(spi1)->icr = SPI_SSPICR_RORIC_BITS;
-            used = 0;
-            discard_line = true;
+        int c = getchar_timeout_us(100000);
+        if (c == PICO_ERROR_TIMEOUT) continue;
+        switch (c) {
+            case 'h': help(); break;
+            case 's': i2c_scan(MOTOR_I2C, "motor i2c0"); i2c_scan(TOF_I2C, "tof i2c1"); break;
+            case 'i': motor_health(); break;
+            case 'p': motor_stress(); break;
+            case 't': tof_check(); break;
+            case 'r':
+                bus_recover(MOTOR_I2C, MOTOR_SDA, MOTOR_SCL, g_motor_baud, "motor");
+                bus_recover(TOF_I2C, TOF_SDA, TOF_SCL, 100000, "tof");
+                break;
+            case 'f':
+                g_motor_baud = (g_motor_baud == 100000) ? 50000 : 100000;
+                i2c_setup(MOTOR_I2C, MOTOR_SDA, MOTOR_SCL, g_motor_baud);
+                break;
+            case '+': case '=':
+                g_effort += EFFORT_STEP; if (g_effort > EFFORT_MAX) g_effort = EFFORT_MAX;
+                printf("Effort %d%%\n", g_effort); break;
+            case '-':
+                g_effort -= EFFORT_STEP; if (g_effort < EFFORT_STEP) g_effort = EFFORT_STEP;
+                printf("Effort %d%%\n", g_effort); break;
+            case 'w': drive_burst( g_effort,  g_effort, g_servo_us, false, "FORWARD");  break;
+            case 'b': drive_burst(-g_effort, -g_effort, g_servo_us, false, "BACKWARD"); break;
+            case 'q': drive_burst( g_effort,  g_effort, g_center_us - TURN_OFFSET_US, true, "FWD + LEFT");  break;
+            case 'e': drive_burst( g_effort,  g_effort, g_center_us + TURN_OFFSET_US, true, "FWD + RIGHT"); break;
+            case 'a': servo_write(g_servo_us - SERVO_STEP_US); break;
+            case 'd': servo_write(g_servo_us + SERVO_STEP_US); break;
+            case 'c': servo_write(g_center_us); break;
+            case 'C': g_center_us = g_servo_us; printf("Center set to %d us\n", g_center_us); break;
+            case 'm': {
+                g_motor_type = (uint8_t)((g_motor_type + 1) % 4);
+                motor_stop_hard();
+                int r = reg_write(MOTOR_I2C, HW_ADDR, HW_REG_MOTOR_TYPE, &g_motor_type, 1);
+                printf("Motor type -> %d (0 none,1 TT,2 N20,3 JGB37): %s\n",
+                       g_motor_type, r == 0 ? "OK" : i2c_err_str(r));
+            } break;
+            case 'v':
+                motor_stop_hard();
+                g_closed_loop = !g_closed_loop;
+                printf("Drive mode -> %s\n", g_closed_loop ? "SPEED 0x33 (closed loop)" : "PWM 0x1F (open loop)");
+                break;
+            case 'x': case ' ': motor_stop_hard(); printf("STOP\n"); break;
+            default: break;
         }
-
-        // Read only available bytes. Never wait for more master clocks.
-        if (spi_is_readable(spi1)) {
-            const char received = (char)spi_get_hw(spi1)->dr;
-            last_byte_us = time_us_64();
-
-            if (received == '\n') {
-                line[used] = '\0';
-
-                if (!discard_line && print_command(line)) {
-                    last_valid_us = time_us_64();
-
-                    if (timeout_reported) {
-                        printf("[COMM] valid reception resumed\n");
-                    }
-
-                    timeout_reported = false;
-                } else {
-                    printf("[RX REJECT] invalid or incomplete command\n");
-                }
-
-                used = 0;
-                discard_line = false;
-            } else if (!discard_line) {
-                if (used < sizeof(line) - 1) {
-                    line[used++] = received;
-                } else {
-                    // Ignore an oversized command until its newline.
-                    discard_line = true;
-                }
-            }
-        }
-
-        const uint64_t now = time_us_64();
-
-        // Discard a partial command if the remaining bytes never arrive.
-        if ((used != 0 || discard_line) &&
-        now - last_byte_us > 10000) {
-
-        printf("[RX TIMEOUT] %u bytes:", used);
-
-        for (unsigned int i = 0; i < used; i++) {
-            printf(" %02X", (unsigned int)(uint8_t)line[i]);
-        }
-
-        printf("\n");
-
-        used = 0;
-        discard_line = false;
-    }
-        // Report once when no valid command has arrived for 250 ms.
-        if (!timeout_reported &&
-            now - last_valid_us > 250000) {
-            printf("[COMM TIMEOUT] no valid command for 250 ms\n");
-            timeout_reported = true;
-        }
-
-        // Poll continuously so the small SPI FIFO is drained promptly.
-        tight_loop_contents();
     }
 }
