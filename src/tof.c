@@ -29,6 +29,7 @@ uint8_t i2cAddress = 0x29;
 
 static bool tof_io_failed;
 static uint64_t ranging_deadline_us;
+int tof_last_status = -1;
 
 static int tof_checked_write(i2c_inst_t *bus, uint8_t addr,
                              const uint8_t *data, size_t length, bool nostop) {
@@ -861,3 +862,47 @@ int i;
 	return 1;
 
 } /* tofGetModel() */
+
+// Start back-to-back ranging. Call once after tofInit(). Returns 1 if OK.
+int tofStartContinuous(void)
+{
+  tof_io_failed = false;
+  writeReg(0x80, 0x01);
+  writeReg(0xFF, 0x01);
+  writeReg(0x00, 0x00);
+  writeReg(0x91, stop_variable);
+  writeReg(0x00, 0x01);
+  writeReg(0xFF, 0x00);
+  writeReg(0x80, 0x00);
+  writeReg(SYSRANGE_START, 0x02);
+  return tof_io_failed ? 0 : 1;
+}
+
+// Non-blocking, about 1 ms. Returns 1 = new reading in *mm (65535 if invalid),
+// 0 = no new reading yet, -1 = I2C error.
+int tofPollDistance(int *mm)
+{
+  tof_io_failed = false;
+  uint8_t st = readReg(RESULT_INTERRUPT_STATUS);
+  if (tof_io_failed) return -1;
+  if ((st & 0x07) == 0) return 0;
+
+  uint16_t range  = readReg16(RESULT_RANGE_STATUS + 10);
+  uint8_t  status = readReg(RESULT_RANGE_STATUS);
+  tof_last_status = (status & 0x78u) >> 3;
+  writeReg(SYSTEM_INTERRUPT_CLEAR, 0x01);
+  if (tof_io_failed) return -1;
+
+  *mm = (((status & 0x78u) >> 3) == 11u) ? (int)range : 65535;
+  return 1;
+}
+
+void tofStopContinuous(void)
+{
+  writeReg(SYSRANGE_START, 0x01);
+  writeReg(0xFF, 0x01);
+  writeReg(0x00, 0x00);
+  writeReg(0x91, 0x00);
+  writeReg(0x00, 0x01);
+  writeReg(0xFF, 0x00);
+}

@@ -35,4 +35,8 @@ int tofReadDistance(void);
 //
 int tofInit(int iChan, int iAddr, int bLongRange);
 
+int tofStartContinuous(void);
+int tofPollDistance(int *mm);
+void tofStopContinuous(void);
+
 #endif // _TOFLIB_H

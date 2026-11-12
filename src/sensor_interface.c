@@ -157,16 +157,25 @@ static bool tof_ready;
 
 static bool tof_init(void) {
     i2c_init(TOF_I2C_BUS, 100000);
-
     gpio_set_function(TOF_SDA_PIN, GPIO_FUNC_I2C);
     gpio_set_function(TOF_SCL_PIN, GPIO_FUNC_I2C);
     gpio_pull_up(TOF_SDA_PIN);
     gpio_pull_up(TOF_SCL_PIN);
-
     sleep_ms(50);
 
-    // Driver performs sensor configuration and reference calibration.
-    return tofInit(1, TOF_ADDRESS, 1) != 0;
+    int model = 0, rev = 0;
+    tofGetModel(&model, &rev);
+    printf("ToF model ID: 0x%02X (expect 0xEE)\n", model);
+    if (model != 0xEE) {
+        printf("ToF: no answer at 0x29 -> check VIN/GND, SDA=GP6, SCL=GP7, XSHUT to 3V3\n");
+        return false;
+    }
+
+    tofStopContinuous();          // in case it kept ranging through an MCU reset
+    sleep_ms(10);
+
+    if (tofInit(1, TOF_ADDRESS, 1) == 0) return false;
+    return tofStartContinuous() != 0;
 }
 
 // Configure only the MCU bus, not the board's motor mode or encoder polarity.
@@ -210,22 +219,23 @@ bool sensors_update(EncoderFeedback *out) {
 //     return (float)distance_mm / 1000.0f;
 // }
 
+// NAN = unknown (I2C error, stale, not ready) -> UNSAFE
+// INFINITY = nothing within range -> clear
+static float    tof_last_m  = NAN;
+static uint64_t tof_last_us = 0;
+
 float sensors_get_radar_distance(void) {
-    if (!tof_ready) {
-        return NAN;
-    }
+    if (!tof_ready) return NAN;
 
-    int distance_mm = tofReadDistance();
-    if (distance_mm <= 0 || distance_mm >= 8190) {
-        printf("ToF rejected raw distance: %d mm\n", distance_mm);
+    int mm;
+    int r = tofPollDistance(&mm);
+    if (r < 0) return NAN;                                   // I2C error
+    if (r == 1) {
+        tof_last_us = time_us_64();
+        tof_last_m = (mm > 0 && mm < 8190) ? (float)mm / 1000.0f : INFINITY;
     }
-
-    // Includes the driver's timeout sentinel of 65535.
-    if (distance_mm <= 0 || distance_mm >= 8190) {
-        return NAN;
-    }
-
-    return (float)distance_mm / 1000.0f;
+    if (time_us_64() - tof_last_us > 150000u) return NAN;    // no new reading for 150 ms
+    return tof_last_m;
 }
 
 // Compatibility accessor for future control; NAN propagates missing calibration.

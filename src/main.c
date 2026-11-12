@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <math.h>
 
 // Include subsystem headers
 #include "comms_spi.h"
@@ -41,6 +42,7 @@ static bool timer_50hz_callback(struct repeating_timer *t) {
 }
 
 
+extern int tof_last_status;
 
 int main(void) {
     stdio_init_all();
@@ -125,6 +127,17 @@ int main(void) {
 
             // Read board-processed encoder telemetry updates
             sensors_update(&wheel_feedback);
+
+            static int dbg_ticks = 0;
+            if (++dbg_ticks >= 10) {            // 5 times per second
+                dbg_ticks = 0;
+                float d = sensors_get_radar_distance();
+                int mm = isnan(d) ? -1 : (isinf(d) ? 9999 : (int)(d * 1000.0f));
+                printf("tof=%d mm  st=%d  safe=%d  cmd=%d  timeout=%d  eff=%d  steer=%d\n",
+       mm, tof_last_status, system_safe, have_command, command_timeout,
+        (int)latest_cmd.target_motor_effort,
+        (int)latest_cmd.target_steering_pulse_us);
+            }
         }
 
         // Put CPU to sleep until the next interrupt 

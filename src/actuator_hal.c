@@ -45,6 +45,9 @@ void actuator_hal_init(void) {
 
     // Setup I2C communication with the motor driver
     i2c_comm_setup();
+
+    uint8_t type0[2] = {0x14, 0x00};   // motor type 0, otherwise the wheels only twitch
+    i2c_write_timeout_us(i2c0, HI_WONDER_I2C_ADDR, type0, 2, false, 3000);
 }
 
 void set_raw_pulse(int pin, uint16_t pulse_width_us) {
