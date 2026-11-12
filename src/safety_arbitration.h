@@ -3,3 +3,4 @@
 #include <stdbool.h>
 
 bool safety_check(void);
+

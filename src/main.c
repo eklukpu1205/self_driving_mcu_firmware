@@ -14,6 +14,19 @@
 #include "hiwonder_driver.h"
 #include "spi_protocol.h"
 
+
+// ToF I2C Hardware Dependencies
+
+#include "hardware/i2c.h"
+#include "hardware/gpio.h"
+
+
+#define TOF_I2C     i2c1
+#define TOF_SDA     6
+#define TOF_SCL     7
+#define TOF_BAUD    100000
+
+
 #define LOOP_PERIOD_US 20000 // 50 Hz
 #define COMMAND_TIMEOUT_US 250000u
 
@@ -27,12 +40,21 @@ static bool timer_50hz_callback(struct repeating_timer *t) {
     return true; // Keep repeating every 20 ms
 }
 
+
+
 int main(void) {
     stdio_init_all();
     sleep_ms(3000);
     actuator_hal_init();
 
     sleep_ms(3000);
+
+    // Initialize I2C1 for the VL53L0X ToF sensor (SDA=6, SCL=7)
+    i2c_init(i2c1, 100000);
+    gpio_set_function(6, GPIO_FUNC_I2C);
+    gpio_set_function(7, GPIO_FUNC_I2C);
+    gpio_pull_up(6);
+    gpio_pull_up(7);
 
     sensors_init();
 
