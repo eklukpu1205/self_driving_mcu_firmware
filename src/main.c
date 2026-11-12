@@ -17,6 +17,7 @@
 #include "hardware/pwm.h"
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
+#include "toflib.h"   // team VL53L0X library (rename if your header differs)
 
 // ---------------- Pins (Proton bench wiring) ----------------
 #define MOTOR_I2C   i2c0
@@ -284,13 +285,85 @@ static void servo_init(void) {
 }
 
 // =====================================================================
-//  ToF quick check (presence + ID only)
+//  ToF (VL53L0X on i2c1) using the team's toflib (Larry Bank / D. Perron port)
+//  tofReadDistance(): mm if valid, 65535 if invalid/no target, -1 on I2C error
 // =====================================================================
+#define TOF_INVALID       65535
+#define OBST_STOP_MM      500     // latch stop below this
+#define OBST_START_MM     700     // need at least this much (valid) clearance to start
+#define OBST_MAX_MS       5000    // max run time
+#define OBST_MAX_INVALID  3       // consecutive invalid readings -> stop
+
+static bool g_tof_ready = false;
+
 static void tof_check(void) {
-    uint8_t id = 0;
-    int r = reg_read(TOF_I2C, TOF_ADDR, TOF_REG_ID, &id, 1, true);
-    if (r == 0) printf("VL53L0X ID = 0x%02X %s\n", id, id == 0xEE ? "(OK)" : "(unexpected!)");
-    else        printf("VL53L0X read FAILED: %d %s\n", r, i2c_err_str(r));
+    int model = 0, rev = 0;
+    tofGetModel(&model, &rev);
+    printf("VL53L0X model=0x%02X rev=0x%02X %s\n", model, rev,
+           model == 0xEE ? "(OK)" : "(expected 0xEE: wiring/power/XSHUT)");
+    if (model != 0xEE) { g_tof_ready = false; return; }
+    g_tof_ready = tofInit(1, TOF_ADDR, 0);       // 0 = normal range mode
+    printf("VL53L0X %s\n", g_tof_ready ? "READY" : "init FAILED");
+}
+
+static void print_mm(int mm) {
+    if (mm < 0)                 printf("  ERROR (I2C/timeout)\n");
+    else if (mm == TOF_INVALID) printf("  invalid (no target in range or weak signal)\n");
+    else                        printf("  %4d mm\n", mm);
+}
+
+// Live readings until any key.
+static void tof_stream(void) {
+    if (!g_tof_ready) { printf("ToF not ready, press 't' first.\n"); return; }
+    printf("Live distance, press any key to stop...\n");
+    while (getchar_timeout_us(0) == PICO_ERROR_TIMEOUT) {
+        print_mm(tofReadDistance());
+        sleep_ms(50);
+    }
+}
+
+// Drive straight at current effort; latch stop on obstacle, error,
+// repeated invalid readings, key, or timeout.
+static void obstacle_drive(void) {
+    if (!g_tof_ready) { printf("ToF not ready, press 't' first.\n"); return; }
+    int r = motor_set(0, 0);
+    if (r) { printf("Drive refused: %s\n", i2c_err_str(r)); return; }
+
+    int mm = tofReadDistance();
+    printf("Start clearance:"); print_mm(mm);
+    if (mm < 0 || mm == TOF_INVALID || mm < OBST_START_MM) {
+        printf("Refused: need a VALID reading > %d mm (start ~1 m from a wall).\n", OBST_START_MM);
+        return;
+    }
+
+    servo_write(g_center_us);
+    printf(">> OBSTACLE RUN  effort=%d  stop<%d mm  max %d ms  (any key = stop)\n",
+           g_effort, OBST_STOP_MM, OBST_MAX_MS);
+    absolute_time_t start = get_absolute_time();
+    absolute_time_t end = make_timeout_time_ms(OBST_MAX_MS);
+    int invalid_streak = 0;
+    const char *why = "timeout";
+
+    while (true) {
+        if (time_reached(end)) break;
+        if (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) { why = "user key"; break; }
+
+        r = motor_set(g_effort, g_effort);
+        if (r) { why = "motor I2C error"; break; }
+
+        int d = tofReadDistance();             // blocking, ~35-40 ms
+        printf("   %5d ms ", (int)(absolute_time_diff_us(start, get_absolute_time()) / 1000));
+        print_mm(d);
+        if (d < 0) { why = "ToF I2C error"; break; }
+        if (d == TOF_INVALID) {
+            if (++invalid_streak >= OBST_MAX_INVALID) { why = "ToF invalid x3"; break; }
+            continue;
+        }
+        invalid_streak = 0;
+        if (d < OBST_STOP_MM) { why = "OBSTACLE"; break; }
+    }
+    motor_stop_hard();
+    printf("<< STOP: %s\n", why);
 }
 
 // =====================================================================
@@ -344,10 +417,11 @@ static void help(void) {
     printf("\n=========== DRIVE / STEER / I2C TEST ===========\n"
            " I2C:   s scan both buses   i motor health   p stress test\n"
            "        r bus recovery      f toggle motor I2C 100k/50k   t ToF ID\n"
-           " Motor: m cycle motor type (now %d)   v toggle PWM 0x1F / SPEED 0x33 (now %s)\n"
+           " Motor: m re-apply motor type 0 (now %d)   v toggle PWM 0x1F / SPEED 0x33 (now %s)\n"
            " Drive: w forward  b backward  q fwd+left  e fwd+right  (%d ms bursts)\n"
            "        + / - effort (now %d%%, max %d%%)   x or SPACE stop\n"
            " Steer: a left  d right  c center  C set current as center\n"
+           " ToF:   t init/ID   l live distance   o drive until obstacle (<500 mm, stops on 3 invalid)\n"
            " Wheels RAISED for first runs. Keep motor power cutoff in reach.\n"
            "================================================\n",
            g_motor_type, g_closed_loop ? "SPEED" : "PWM", BURST_MS, g_effort, EFFORT_MAX);
@@ -368,6 +442,7 @@ int main(void) {
 
     if (!motor_connect(20))
         printf("Motor driver NOT responding. Turn on chassis battery, then press 'i'.\n");
+    tof_check();
     help();
 
     while (true) {
@@ -379,6 +454,8 @@ int main(void) {
             case 'i': motor_health(); break;
             case 'p': motor_stress(); break;
             case 't': tof_check(); break;
+            case 'l': tof_stream(); break;
+            case 'o': obstacle_drive(); break;
             case 'r':
                 bus_recover(MOTOR_I2C, MOTOR_SDA, MOTOR_SCL, g_motor_baud, "motor");
                 bus_recover(TOF_I2C, TOF_SDA, TOF_SCL, 100000, "tof");
@@ -402,7 +479,7 @@ int main(void) {
             case 'c': servo_write(g_center_us); break;
             case 'C': g_center_us = g_servo_us; printf("Center set to %d us\n", g_center_us); break;
             case 'm': {
-                g_motor_type = (uint8_t)((g_motor_type + 1) % 4);
+                g_motor_type = 0;   // types 1-3 make PWM 0x1F only twitch on this board
                 motor_stop_hard();
                 int r = reg_write(MOTOR_I2C, HW_ADDR, HW_REG_MOTOR_TYPE, &g_motor_type, 1);
                 printf("Motor type -> %d (0 none,1 TT,2 N20,3 JGB37): %s\n",
