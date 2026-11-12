@@ -17,7 +17,7 @@
 #include "hardware/pwm.h"
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
-#include "toflib.h"   // team VL53L0X library (rename if your header differs)
+#include "tof.h"   // team VL53L0X library
 
 // ---------------- Pins (Proton bench wiring) ----------------
 #define MOTOR_I2C   i2c0
