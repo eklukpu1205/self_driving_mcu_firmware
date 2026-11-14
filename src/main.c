@@ -112,6 +112,8 @@ int main(void) {
 
             // Commented out ToF call
             // bool system_safe = !safety_check(); 
+            bool system_safe = true;
+
 
             // Convert protocol units to actuators
             float target_speed = (float)latest_cmd.target_motor_effort;
