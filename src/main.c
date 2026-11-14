@@ -109,7 +109,9 @@ int main(void) {
             tick_50hz = false;
 
             // Check radar / safety constraints (evaluates ToF distance internally)
-            bool system_safe = !safety_check(); 
+
+            // Commented out ToF call
+            // bool system_safe = !safety_check(); 
 
             // Convert protocol units to actuators
             float target_speed = (float)latest_cmd.target_motor_effort;
