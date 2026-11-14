@@ -5,10 +5,10 @@
 
 // Jetson SPI0 master (header pins 19/21/23/24) -> MCU SPI1 slave.
 // GP12=RX (Jetson MOSI); GP11=TX (Jetson MISO). Common GND required.
-#define COMMS_CS   13u
-#define COMMS_SCLK 10u
-#define COMMS_MOSI 12u
-#define COMMS_MISO 11u
+#define COMMS_CS   13
+#define COMMS_SCLK 10
+#define COMMS_MOSI 12
+#define COMMS_MISO 11
 
 // ISR receives raw bytes into a software ring. No parsing/printf in ISR.
 void comms_spi_init(void);
