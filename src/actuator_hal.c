@@ -16,7 +16,7 @@
 // PWM Timing Calculations (50 Hz)
 #define PWM_WRAP_50HZ 19999
 
-uint servo_slice;
+static uint servo_slice;
 
 void actuator_hal_init(void) {
     // Assign pins to the PWM peripheral function
@@ -45,6 +45,9 @@ void actuator_hal_init(void) {
 
     // Setup I2C communication with the motor driver
     i2c_comm_setup();
+
+    // Ensure motor throttle starts explicitly zeroed and servo neutral
+    actuator_hal_emergency_halt();
 }
 
 void set_raw_pulse(int pin, uint16_t pulse_width_us) {
@@ -94,20 +97,6 @@ bool actuator_hal_set_steering_angle_deg(float angle_deg) {
     return true;
 }
 
-static void move_steering(int *current, int target) {
-    while (*current != target) {
-        if (*current < target) {
-            *current += 5;
-            if (*current > target) *current = target;
-        } else {
-            *current -= 5;
-            if (*current < target) *current = target;
-        }
-
-        actuator_hal_set_steering_pulse_us((uint16_t)*current);
-        sleep_ms(5);
-    }
-}
 
 bool actuator_hal_set_throttle_effort(float throttle_percent) {
     if (!isfinite(throttle_percent)) {

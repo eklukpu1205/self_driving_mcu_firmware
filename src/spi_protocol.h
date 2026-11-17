@@ -70,7 +70,7 @@ static inline int16_t spi_get_i16le(const uint8_t *in) {
 // Check that received commands are in our test ranges.
 static inline bool spi_command_test_ranges_ok(const SpiCommand *cmd) {
     if (cmd == NULL) return false;
-    return cmd->target_motor_effort >= 0 &&
+    return cmd->target_motor_effort >= -SPI_TEST_MOTOR_EFFORT_MAX &&
            cmd->target_motor_effort <= SPI_TEST_MOTOR_EFFORT_MAX &&
            cmd->target_steering_pulse_us >= SPI_TEST_STEERING_MIN_US &&
            cmd->target_steering_pulse_us <= SPI_TEST_STEERING_MAX_US &&

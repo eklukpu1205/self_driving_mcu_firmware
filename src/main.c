@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 // Include subsystem headers
 #include "comms_spi.h"
@@ -13,19 +14,6 @@
 #include "encoder_feedback.h"
 #include "hiwonder_driver.h"
 #include "spi_protocol.h"
-
-
-// ToF I2C Hardware Dependencies
-
-#include "hardware/i2c.h"
-#include "hardware/gpio.h"
-
-
-#define TOF_I2C     i2c1
-#define TOF_SDA     6
-#define TOF_SCL     7
-#define TOF_BAUD    100000
-
 
 #define LOOP_PERIOD_US 20000 // 50 Hz
 #define COMMAND_TIMEOUT_US 250000u
@@ -40,25 +28,18 @@ static bool timer_50hz_callback(struct repeating_timer *t) {
     return true; // Keep repeating every 20 ms
 }
 
-
-
 int main(void) {
     stdio_init_all();
-    sleep_ms(3000);
+    // Allow brief time for USB serial/clocks to stabilize
+    sleep_ms(250);
+
+    // Initialize actuators (PWM servo and motor I2C driver) to safe neutral/halt state
     actuator_hal_init();
 
-    sleep_ms(3000);
-
-    // Initialize I2C1 for the VL53L0X ToF sensor (SDA=6, SCL=7)
-    i2c_init(i2c1, 100000);
-    gpio_set_function(6, GPIO_FUNC_I2C);
-    gpio_set_function(7, GPIO_FUNC_I2C);
-    gpio_pull_up(6);
-    gpio_pull_up(7);
-
+    // Initialize sensors (encoders enabled, ToF bypassed)
     sensors_init();
 
-    // Initializes SPI1 and enables SPI1_IRQ background handler
+    // Initializes SPI1 slave and enables SPI1_IRQ background handler
     comms_spi_init(); 
 
     // Start the 50 Hz hardware timer interrupt
@@ -83,16 +64,57 @@ int main(void) {
         while (comms_spi_read_byte(&b)) {
             frame[used++] = b;
             
-            if (used == SPI_CMD_BYTES) {
+            // Framing synchronization state machine:
+            // Byte 0 must match low byte of SPI_CMD_MAGIC (0x5A)
+            if (used == 1) {
+                if (frame[0] != (uint8_t)(SPI_CMD_MAGIC & 0xFF)) {
+                    used = 0; // Discard non-marker byte immediately
+                }
+            } 
+            // Byte 1 must match high byte of SPI_CMD_MAGIC (0xA5)
+            else if (used == 2) {
+                if (frame[1] != (uint8_t)((SPI_CMD_MAGIC >> 8) & 0xFF)) {
+                    // If byte 1 happens to be 0x5A, slide it to byte 0
+                    if (frame[1] == (uint8_t)(SPI_CMD_MAGIC & 0xFF)) {
+                        frame[0] = frame[1];
+                        used = 1;
+                    } else {
+                        used = 0;
+                    }
+                }
+            } 
+            // Complete 10-byte packet received: validate and decode
+            else if (used == SPI_CMD_BYTES) {
                 SpiCommand cmd;
-                // Directly decode the fixed-size packet 
                 if (spi_command_decode(frame, &cmd)) {
                     latest_cmd = cmd;
                     have_command = true;
                     last_valid_us = time_us_64();
                     command_timeout = false;
+                    used = 0;
+                } else {
+                    // Frame validation failed (CRC mismatch or out-of-range value).
+                    // Slide forward searching for the next 0x5A to regain sync.
+                    size_t next_sync = 1;
+                    while (next_sync < SPI_CMD_BYTES && frame[next_sync] != (uint8_t)(SPI_CMD_MAGIC & 0xFF)) {
+                        next_sync++;
+                    }
+                    if (next_sync < SPI_CMD_BYTES) {
+                        size_t remaining = SPI_CMD_BYTES - next_sync;
+                        memmove(frame, &frame[next_sync], remaining);
+                        used = remaining;
+                        if (used >= 2 && frame[1] != (uint8_t)((SPI_CMD_MAGIC >> 8) & 0xFF)) {
+                            if (frame[1] == (uint8_t)(SPI_CMD_MAGIC & 0xFF)) {
+                                frame[0] = frame[1];
+                                used = 1;
+                            } else {
+                                used = 0;
+                            }
+                        }
+                    } else {
+                        used = 0;
+                    }
                 }
-                used = 0; // Reset frame index for the next packet
             }
         }
 
@@ -108,19 +130,13 @@ int main(void) {
         if (tick_50hz) {
             tick_50hz = false;
 
-            // Check radar / safety constraints (evaluates ToF distance internally)
+            // Check radar / safety constraints (returns false / clear when ToF is bypassed)
+            bool system_safe = !safety_check();
 
-            // Commented out ToF call
-            // bool system_safe = !safety_check(); 
-            bool system_safe = true;
-
-
-            // Convert protocol units to actuators
-            float target_speed = (float)latest_cmd.target_motor_effort;
-            float target_steering = (float)latest_cmd.target_steering_pulse_us;
-
-            // Execute movement commands if system is safe and valid data is present
+            // Execute movement commands if system is safe and valid unexpired data is present
             if (system_safe && have_command && !latest_cmd.emergency_brake && !command_timeout) {
+                float target_speed = (float)latest_cmd.target_motor_effort;
+                float target_steering = (float)latest_cmd.target_steering_pulse_us;
                 actuator_hal_set_throttle_effort(target_speed);
                 actuator_hal_set_steering_pulse_us((uint16_t)target_steering);
             } else {

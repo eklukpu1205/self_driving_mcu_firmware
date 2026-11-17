@@ -23,6 +23,8 @@ bool hiwonder_init(i2c_inst_t *bus, unsigned int sda, unsigned int scl,
     // Route both GPIOs to the I2C peripheral instead of software GPIO control.
     gpio_set_function(sda, GPIO_FUNC_I2C);
     gpio_set_function(scl, GPIO_FUNC_I2C);
+    gpio_pull_up(sda);
+    gpio_pull_up(scl);
     // External pull-ups must be suitable for RP2040 3.3 V logic.
     driver_bus = bus;
     transfer_timeout_us = timeout_us;

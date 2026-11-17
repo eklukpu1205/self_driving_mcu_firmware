@@ -155,6 +155,7 @@ static bool tof_ready;
 //     return true;
 // }
 
+#if 0
 static bool tof_init(void) {
     i2c_init(TOF_I2C_BUS, 100000);
 
@@ -168,6 +169,7 @@ static bool tof_init(void) {
     // Driver performs sensor configuration and reference calibration.
     return tofInit(1, TOF_ADDRESS, 1) != 0;
 }
+#endif
 
 // Configure only the MCU bus, not the board's motor mode or encoder polarity.
 void sensors_init(void) {
@@ -176,8 +178,9 @@ void sensors_init(void) {
     encoder_ready = ENCODER_ENABLED &&
         hiwonder_init(ENCODER_I2C_BUS, ENCODER_SDA_PIN, ENCODER_SCL_PIN,
                       ENCODER_I2C_BAUDRATE, ENCODER_TRANSFER_TIMEOUT_US);
-    tof_ready = tof_init();
-    printf("ToF initialization: %s\n", tof_ready ? "OK" : "FAILED");
+    // ToF sensor bypassed due to wiring/hardware issues on the sensor board.
+    tof_ready = false;
+    printf("Sensors initialized (ToF bypassed)\n");
 }
 
 // Read all totals, timestamp reception, then calculate the selected wheel deltas.
@@ -211,21 +214,8 @@ bool sensors_update(EncoderFeedback *out) {
 // }
 
 float sensors_get_radar_distance(void) {
-    if (!tof_ready) {
-        return NAN;
-    }
-
-    int distance_mm = tofReadDistance();
-    if (distance_mm <= 0 || distance_mm >= 8190) {
-        printf("ToF rejected raw distance: %d mm\n", distance_mm);
-    }
-
-    // Includes the driver's timeout sentinel of 65535.
-    if (distance_mm <= 0 || distance_mm >= 8190) {
-        return NAN;
-    }
-
-    return (float)distance_mm / 1000.0f;
+    // ToF is currently bypassed, return NAN (safety_check will treat as clear/safe)
+    return NAN;
 }
 
 // Compatibility accessor for future control; NAN propagates missing calibration.

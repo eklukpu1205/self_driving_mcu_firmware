@@ -48,6 +48,11 @@ void comms_spi_init(void) {
     gpio_set_function(COMMS_MISO, GPIO_FUNC_SPI);
     gpio_set_function(COMMS_CS, GPIO_FUNC_SPI);
 
+    // Keep CS pulled high when floating (e.g. Jetson off/booting) so slave stays unselected.
+    // Keep SCLK pulled low in CPOL=0 idle state to suppress floating clock edges.
+    gpio_pull_up(COMMS_CS);
+    gpio_pull_down(COMMS_SCLK);
+
     spi_hw_t *hw = spi_get_hw(spi1);
     while (spi_is_readable(spi1)) (void)hw->dr;
     hw->icr = SPI_SSPICR_RTIC_BITS | SPI_SSPICR_RORIC_BITS;
