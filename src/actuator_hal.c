@@ -4,6 +4,7 @@
 #include "hardware/i2c.h"
 #include <math.h>
 #include "hardware/clocks.h"
+#include "pico/stdlib.h" // Eitan: for sleep_ms
 
 // Pin Definitions 
 #define PIN_SERVO_PWM 14
@@ -12,6 +13,7 @@
 #define MOTOR_I2C_SCL_PIN 5
 #define HI_WONDER_I2C_ADDR 0x34 // The motor driver module address
 #define MOTOR_PWM_ADDR 0x1F
+#define MOTOR_TYPE_ADDR 0x14 // Eitan: motor type register, has to be 0 for the PWM to work
 
 // PWM Timing Calculations (50 Hz)
 #define PWM_WRAP_50HZ 19999
@@ -45,6 +47,16 @@ void actuator_hal_init(void) {
 
     // Setup I2C communication with the motor driver
     i2c_comm_setup();
+
+    // Eitan: set motor type to 0. With types 1-3 the motors only jitter.
+    // Try for about 2 s in case the motor board is still starting up.
+    uint8_t type_cmd[2] = {MOTOR_TYPE_ADDR, 0};
+    for (int i = 0; i < 10; i++) {
+        if (i2c_write_timeout_us(i2c0, HI_WONDER_I2C_ADDR, type_cmd, 2, false, 3000) == 2) {
+            break;
+        }
+        sleep_ms(200);
+    }
 
     // Ensure motor throttle starts explicitly zeroed and servo neutral
     actuator_hal_emergency_halt();
