@@ -1,5 +1,6 @@
 // =====================================================================
-//  Drive + Steer + I2C diagnostic test  —  Purdue Proton (RP2350)
+//  Drive + Steer + ToF test  —  Purdue Proton (RP2350)
+//  Needs the team's tof.c in src/ (only tofInit() is used).
 //  Scale Autonomous Vehicle Testbed
 //
 //  Drop in as src/main.c, build with the `proton` env, upload via
@@ -17,7 +18,9 @@
 #include "hardware/pwm.h"
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
-#include "tof.h"   // team VL53L0X library
+// Team VL53L0X library (tof.c). Only tofInit() is used; the rest is raw I2C below.
+// XSHUT is not connected (the breakout keeps the sensor on).
+int tofInit(int iChan, int iAddr, int bLongRange);
 
 // ---------------- Pins (Proton bench wiring) ----------------
 #define MOTOR_I2C   i2c0
@@ -285,85 +288,147 @@ static void servo_init(void) {
 }
 
 // =====================================================================
-//  ToF (VL53L0X on i2c1) using the team's toflib (Larry Bank / D. Perron port)
-//  tofReadDistance(): mm if valid, 65535 if invalid/no target, -1 on I2C error
+//  ToF (VL53L0X on i2c1)
+//  Setup: team tofInit() in NORMAL mode, then continuous ranging (~30/s).
+//  Reading: non-blocking raw I2C poll.
+//  An INVALID reading means "nothing in range" (> ~1.2 m) -> NOT an obstacle.
 // =====================================================================
-#define TOF_INVALID       65535
-#define OBST_STOP_MM      500     // latch stop below this
-#define OBST_START_MM     700     // need at least this much (valid) clearance to start
-#define OBST_MAX_MS       5000    // max run time
-#define OBST_MAX_INVALID  3       // consecutive invalid readings -> stop
+#define OBST_STOP_MM   100        // obstacle closer than this -> stop
+#define TOF_STALE_MS   1000       // 10-2: no new reading for > 1 s -> stop
+#define OBST_HOLD_MS   1000       // 10-3: stay stopped 1 s after obstacle is gone
 
 static bool g_tof_ready = false;
 
-static void tof_check(void) {
-    int model = 0, rev = 0;
-    tofGetModel(&model, &rev);
-    printf("VL53L0X model=0x%02X rev=0x%02X %s\n", model, rev,
-           model == 0xEE ? "(OK)" : "(expected 0xEE: wiring/power/XSHUT)");
-    if (model != 0xEE) { g_tof_ready = false; return; }
-    g_tof_ready = tofInit(1, TOF_ADDR, 0);       // 0 = normal range mode
-    printf("VL53L0X %s\n", g_tof_ready ? "READY" : "init FAILED");
+static int tof_rd(uint8_t reg, uint8_t *buf, size_t n) {
+    if (i2c_write_timeout_us(TOF_I2C, TOF_ADDR, &reg, 1, true, I2C_TIMEOUT_US) != 1) return -1;
+    if (i2c_read_timeout_us(TOF_I2C, TOF_ADDR, buf, n, false, I2C_TIMEOUT_US) != (int)n) return -1;
+    return 0;
 }
 
-static void print_mm(int mm) {
-    if (mm < 0)                 printf("  ERROR (I2C/timeout)\n");
-    else if (mm == TOF_INVALID) printf("  invalid (no target in range or weak signal)\n");
-    else                        printf("  %4d mm\n", mm);
+static int tof_wr(uint8_t reg, uint8_t v) {
+    uint8_t b[2] = {reg, v};
+    return i2c_write_timeout_us(TOF_I2C, TOF_ADDR, b, 2, false, I2C_TIMEOUT_US) == 2 ? 0 : -1;
 }
 
-// Live readings until any key.
+// ID check + init + start continuous ranging. Quiet = no prints (used for auto-restart).
+static bool tof_start(bool quiet) {
+    uint8_t id = 0;
+    if (tof_rd(TOF_REG_ID, &id, 1) || id != 0xEE) {
+        if (!quiet) printf("ToF ID read: %s\n", id ? "wrong ID" : "no answer (wiring/power)");
+        return false;
+    }
+    if (!tofInit(1, TOF_ADDR, 0)) {                        // 0 = normal mode
+        if (!quiet) printf("ToF init FAILED\n");
+        return false;
+    }
+    uint8_t sv = 0;
+    int e = 0;
+    e |= tof_wr(0x80, 0x01); e |= tof_wr(0xFF, 0x01); e |= tof_wr(0x00, 0x00);
+    e |= tof_rd(0x91, &sv, 1);
+    e |= tof_wr(0x91, sv);
+    e |= tof_wr(0x00, 0x01); e |= tof_wr(0xFF, 0x00); e |= tof_wr(0x80, 0x00);
+    e |= tof_wr(0x00, 0x02);                               // back-to-back ranging
+    if (!quiet) printf("ToF ID 0xEE OK, normal mode, continuous: %s\n", e ? "FAILED" : "RUNNING");
+    return e == 0;
+}
+
+static void tof_check(void) { g_tof_ready = tof_start(false); }
+
+// 1 = new reading, 0 = nothing new yet, -1 = I2C error.
+// *mm = distance, or -1 if invalid (nothing in range).
+static int tof_poll(int *mm) {
+    uint8_t st;
+    if (tof_rd(0x13, &st, 1)) return -1;
+    if ((st & 0x07) == 0) return 0;
+    uint8_t r[12];
+    if (tof_rd(0x14, r, 12)) return -1;
+    tof_wr(0x0B, 0x01);                                    // clear interrupt
+    bool valid = ((r[0] & 0x78) >> 3) == 11;
+    *mm = valid ? ((r[10] << 8) | r[11]) : -1;
+    return 1;
+}
+
+// Live readings until any key (also shows readings per second for 10-1).
 static void tof_stream(void) {
     if (!g_tof_ready) { printf("ToF not ready, press 't' first.\n"); return; }
     printf("Live distance, press any key to stop...\n");
+    int count = 0, last = -1;
+    absolute_time_t next = make_timeout_time_ms(250);
+    uint64_t t_sec = time_us_64();
+    int per_sec = 0;
     while (getchar_timeout_us(0) == PICO_ERROR_TIMEOUT) {
-        print_mm(tofReadDistance());
-        sleep_ms(50);
+        int mm, r = tof_poll(&mm);
+        if (r < 0) { printf("  ToF I2C error\n"); sleep_ms(200); continue; }
+        if (r == 1) { count++; last = mm; }
+        if (time_us_64() - t_sec >= 1000000) { per_sec = count; count = 0; t_sec = time_us_64(); }
+        if (time_reached(next)) {
+            next = make_timeout_time_ms(250);
+            if (last >= 0) printf("  %4d mm   (%d readings/s)\n", last, per_sec);
+            else           printf("  far / nothing in range   (%d readings/s)\n", per_sec);
+        }
+        sleep_ms(2);
     }
 }
 
-// Drive straight at current effort; latch stop on obstacle, error,
-// repeated invalid readings, key, or timeout.
+// Drive straight with the safety rules until any key:
+//   obstacle < 500 mm -> stop, stay stopped 1 s after it is gone (10-3)
+//   no new ToF reading for > 1 s -> stop (10-2), sensor auto-restarts
 static void obstacle_drive(void) {
     if (!g_tof_ready) { printf("ToF not ready, press 't' first.\n"); return; }
     int r = motor_set(0, 0);
     if (r) { printf("Drive refused: %s\n", i2c_err_str(r)); return; }
 
-    int mm = tofReadDistance();
-    printf("Start clearance:"); print_mm(mm);
-    if (mm < 0 || mm == TOF_INVALID || mm < OBST_START_MM) {
-        printf("Refused: need a VALID reading > %d mm (start ~1 m from a wall).\n", OBST_START_MM);
-        return;
-    }
-
     servo_write(g_center_us);
-    printf(">> OBSTACLE RUN  effort=%d  stop<%d mm  max %d ms  (any key = stop)\n",
-           g_effort, OBST_STOP_MM, OBST_MAX_MS);
-    absolute_time_t start = get_absolute_time();
-    absolute_time_t end = make_timeout_time_ms(OBST_MAX_MS);
-    int invalid_streak = 0;
-    const char *why = "timeout";
+    printf(">> SAFE DRIVE  effort=%d  stop<%d mm  stale>%d ms  hold %d ms  (any key = stop)\n",
+           g_effort, OBST_STOP_MM, TOF_STALE_MS, OBST_HOLD_MS);
 
-    while (true) {
-        if (time_reached(end)) break;
-        if (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) { why = "user key"; break; }
+    uint64_t t0 = time_us_64(), now;
+    uint64_t last_new = t0, last_obst = 0, last_retry = t0, last_print = t0;
+    int dist = -1, per_sec = 0;
+    const char *prev = "";
+    const char *why = "user key";
 
-        r = motor_set(g_effort, g_effort);
+    while (getchar_timeout_us(0) == PICO_ERROR_TIMEOUT) {
+        now = time_us_64();
+
+        int mm;
+        if (tof_poll(&mm) == 1) {
+            last_new = now; per_sec++; dist = mm;
+            if (mm >= 0 && mm < OBST_STOP_MM) last_obst = now;
+        }
+
+        bool stale = (now - last_new) > (uint64_t)TOF_STALE_MS * 1000;
+        if (stale && now - last_retry > 1000000) {          // try to bring the sensor back
+            last_retry = now;
+            if (tof_start(true)) { last_new = now; printf("   ToF restarted\n"); }
+        }
+        bool hold = last_obst && (now - last_obst) < (uint64_t)OBST_HOLD_MS * 1000;
+
+        const char *state = stale ? "STOP: no ToF data (10-2)"
+                          : hold  ? "STOP: obstacle / 1 s hold (10-3)"
+                          :         "DRIVE";
+        r = (state[0] == 'D') ? motor_set(g_effort, g_effort) : motor_set(0, 0);
         if (r) { why = "motor I2C error"; break; }
 
-        int d = tofReadDistance();             // blocking, ~35-40 ms
-        printf("   %5d ms ", (int)(absolute_time_diff_us(start, get_absolute_time()) / 1000));
-        print_mm(d);
-        if (d < 0) { why = "ToF I2C error"; break; }
-        if (d == TOF_INVALID) {
-            if (++invalid_streak >= OBST_MAX_INVALID) { why = "ToF invalid x3"; break; }
-            continue;
+        int t_ms = (int)((now - t0) / 1000);
+        if (state != prev) { printf("   %6d ms  %s\n", t_ms, state); prev = state; }
+        if (now - last_print >= 1000000) {
+            last_print = now;
+            if (dist >= 0) printf("   %6d ms  dist %4d mm  %2d readings/s  %s\n", t_ms, dist, per_sec, state);
+            else           printf("   %6d ms  dist  far     %2d readings/s  %s\n", t_ms, per_sec, state);
+            per_sec = 0;
         }
-        invalid_streak = 0;
-        if (d < OBST_STOP_MM) { why = "OBSTACLE"; break; }
+        sleep_ms(2);
     }
     motor_stop_hard();
     printf("<< STOP: %s\n", why);
+}
+
+// Used by the drive bursts: true if something is closer than 500 mm right now.
+static bool tof_obstacle_now(void) {
+    if (!g_tof_ready) return false;
+    int mm;
+    return tof_poll(&mm) == 1 && mm >= 0 && mm < OBST_STOP_MM;
 }
 
 // =====================================================================
@@ -399,6 +464,7 @@ static void drive_burst(int left, int right, int servo_us, bool recenter, const 
                eok ? (int)(e[RIGHT_IDX] - e0[RIGHT_IDX]) : 0);
         int c = getchar_timeout_us(0);
         if (c == 'x' || c == ' ') { printf("Stopped by user.\n"); break; }
+        if (left > 0 && right > 0 && tof_obstacle_now()) { printf("OBSTACLE < %d mm, stopping.\n", OBST_STOP_MM); break; }
         sleep_ms(REFRESH_MS);
     }
     motor_stop_hard();
@@ -421,7 +487,9 @@ static void help(void) {
            " Drive: w forward  b backward  q fwd+left  e fwd+right  (%d ms bursts)\n"
            "        + / - effort (now %d%%, max %d%%)   x or SPACE stop\n"
            " Steer: a left  d right  c center  C set current as center\n"
-           " ToF:   t init/ID   l live distance   o drive until obstacle (<500 mm, stops on 3 invalid)\n"
+           " ToF:   t init/ID   l live distance + readings/s\n"
+           "        o safe drive (stop <500 mm, 1 s hold, stop if no ToF data >1 s)\n"
+           "        forward bursts (w q e) also stop if something is < 500 mm\n"
            " Wheels RAISED for first runs. Keep motor power cutoff in reach.\n"
            "================================================\n",
            g_motor_type, g_closed_loop ? "SPEED" : "PWM", BURST_MS, g_effort, EFFORT_MAX);
