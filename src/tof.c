@@ -796,8 +796,8 @@ uint16_t range;
   // fractional ranging is not enabled
   range = readReg16(RESULT_RANGE_STATUS + 10);
   uint8_t raw_status = readReg(RESULT_RANGE_STATUS);
-  printf("ToF raw: %u mm | range-status register: 0x%02X\n",
-         (unsigned int)range, (unsigned int)raw_status);
+  // printf("ToF raw: %u mm | range-status register: 0x%02X\n",
+  //        (unsigned int)range, (unsigned int)raw_status);
 
   writeReg(SYSTEM_INTERRUPT_CLEAR, 0x01);
 

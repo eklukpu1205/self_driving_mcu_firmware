@@ -10,6 +10,10 @@
 #define PULSE_NEUTRAL_US 1500
 #define PULSE_ABSOLUTE_MAX_US 2000
 
+// Hiwonder Motor Driver I2C Constants
+#define HI_WONDER_I2C_ADDR 0x34
+#define MOTOR_TYPE_ADDR 0x14
+
 
 
 

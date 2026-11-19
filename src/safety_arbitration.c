@@ -3,6 +3,7 @@
 #include "sensor_interface.h"
 #include "actuator_hal.h"
 #include <math.h>
+#include <stdio.h>
 
 #define EMERGENCY_STOP_DISTANCE_M 0.50f
 
@@ -12,6 +13,8 @@ bool safety_check(void) {
     if (!isnan(distance_m) &&
         distance_m > 0.0f &&
         distance_m < EMERGENCY_STOP_DISTANCE_M) {
+
+        printf("Engaging Emergency Brake! \n");
 
         actuator_hal_emergency_halt();
         return true;

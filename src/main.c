@@ -1,5 +1,6 @@
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
+#include "hardware/i2c.h"
 #include "hardware/timer.h"
 #include <stdio.h>
 #include <stdbool.h>
@@ -21,6 +22,22 @@
 // Flag set by the 50 Hz hardware timer interrupt
 static volatile bool tick_50hz = false;
 
+// Query the motor type from the Hiwonder motor board on i2c0 (addr 0x34, reg 0x14)
+static int query_motor_type(uint8_t *type_out) {
+    uint8_t reg = MOTOR_TYPE_ADDR;
+    if (i2c_write_timeout_us(i2c0, HI_WONDER_I2C_ADDR, &reg, 1, true, 5000) != 1) {
+        return -1;
+    }
+    uint8_t val = 0xFF;
+    if (i2c_read_timeout_us(i2c0, HI_WONDER_I2C_ADDR, &val, 1, false, 5000) != 1) {
+        return -2;
+    }
+    if (type_out) {
+        *type_out = val;
+    }
+    return 0;
+}
+
 // 50 Hz Hardware Timer Interrupt Callback
 static bool timer_50hz_callback(struct repeating_timer *t) {
     (void)t;
@@ -36,7 +53,17 @@ int main(void) {
     // Initialize actuators (PWM servo and motor I2C driver) to safe neutral/halt state
     actuator_hal_init();
 
-    // Initialize sensors (encoders enabled, ToF bypassed)
+    // Query and verify motor type at startup from i2c0 (HI_WONDER_I2C_ADDR)
+    uint8_t startup_motor_type = 0xFF;
+    int err = query_motor_type(&startup_motor_type);
+    if (err == 0) {
+        printf("[Main]: Motor type initialized on i2c0 (addr 0x%02X, reg 0x%02X): %u\n",
+               HI_WONDER_I2C_ADDR, MOTOR_TYPE_ADDR, startup_motor_type);
+    } else {
+        printf("[Main]: Failed to read initial motor type from i2c0 (err=%d)\n", err);
+    }
+
+    // Initialize sensors (encoders and ToF)
     sensors_init();
 
     // Initializes SPI1 slave and enables SPI1_IRQ background handler
@@ -130,7 +157,7 @@ int main(void) {
         if (tick_50hz) {
             tick_50hz = false;
 
-            // Check radar / safety constraints (returns false / clear when ToF is bypassed)
+            // Check radar / safety constraints (evaluates ToF distance internally)
             bool system_safe = !safety_check();
 
             // Execute movement commands if system is safe and valid unexpired data is present
@@ -145,6 +172,17 @@ int main(void) {
 
             // Read board-processed encoder telemetry updates
             sensors_update(&wheel_feedback);
+
+            // Query motor type periodically during execution (every 50 ticks = 1 Hz)
+            static uint32_t motor_type_query_count = 0;
+            if (++motor_type_query_count % 50 == 0) {
+                uint8_t exec_motor_type = 0xFF;
+                if (query_motor_type(&exec_motor_type) == 0) {
+                    printf("[Main]: Motor type during execution: %u\n", exec_motor_type);
+                } else {
+                    printf("[Main]: Failed to read motor type during execution\n");
+                }
+            }
         }
 
         // Put CPU to sleep until the next interrupt 
