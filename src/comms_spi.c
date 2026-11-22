@@ -50,8 +50,13 @@ void comms_spi_init(void) {
 
     // Keep CS pulled high when floating (e.g. Jetson off/booting) so slave stays unselected.
     // Keep SCLK pulled low in CPOL=0 idle state to suppress floating clock edges.
-    gpio_pull_up(COMMS_CS);
-    gpio_pull_down(COMMS_SCLK);
+    // Proton PCB: the Jetson 40-pin header goes through auto-direction level
+    // shifters that misbehave with pull resistors / extra load. CS already has
+    // R35 (10k) to 3V3 on the PCB, so turn the internal pulls OFF on all SPI pins.
+    gpio_disable_pulls(COMMS_CS);
+    gpio_disable_pulls(COMMS_SCLK);
+    gpio_disable_pulls(COMMS_MOSI);
+    gpio_disable_pulls(COMMS_MISO);
 
     spi_hw_t *hw = spi_get_hw(spi1);
     while (spi_is_readable(spi1)) (void)hw->dr;

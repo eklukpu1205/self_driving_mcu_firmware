@@ -7,10 +7,10 @@
 #include <math.h>
 
 // Pin Definitions
-#define PIN_SERVO_PWM 14
+#define PIN_SERVO_PWM 16   // Proton PCB: J7 (PWM_STEER)
 
-#define MOTOR_I2C_SDA_PIN 4
-#define MOTOR_I2C_SCL_PIN 5
+#define MOTOR_I2C_SDA_PIN 6   // Proton PCB: I2C1 -> J5
+#define MOTOR_I2C_SCL_PIN 7
 #define MOTOR_PWM_ADDR 0x1F
 
 // PWM Timing Calculations (50 Hz)
@@ -50,7 +50,7 @@ void actuator_hal_init(void) {
   // Try for about 2 s in case the motor board is still starting up.
   uint8_t type_cmd[2] = {MOTOR_TYPE_ADDR, 0};
   for (int i = 0; i < 10; i++) {
-    if (i2c_write_timeout_us(i2c0, HI_WONDER_I2C_ADDR, type_cmd, 2, false,
+    if (i2c_write_timeout_us(i2c1, HI_WONDER_I2C_ADDR, type_cmd, 2, false,
                              3000) == 2) {
       break;
     }
@@ -126,10 +126,12 @@ bool actuator_hal_set_throttle_effort(float throttle_percent) {
 
   int8_t pwm_val = (int8_t)throttle_percent;
 
-  uint8_t motor_data[5] = {MOTOR_PWM_ADDR, (uint8_t)(-pwm_val), 0,
-                           (uint8_t)(pwm_val), 0};
+  // Proton car: positive effort = forward. Signs flipped from the bench setup
+  // (car drove backwards). If only one wheel spins the wrong way, flip only that one.
+  uint8_t motor_data[5] = {MOTOR_PWM_ADDR, (uint8_t)(pwm_val), 0,
+                           (uint8_t)(-pwm_val), 0};
 
-  int result = i2c_write_timeout_us(i2c0, HI_WONDER_I2C_ADDR, motor_data,
+  int result = i2c_write_timeout_us(i2c1, HI_WONDER_I2C_ADDR, motor_data,
                                     sizeof(motor_data), false, 3000);
 
   return result == (int)sizeof(motor_data);
@@ -145,7 +147,7 @@ void actuator_hal_emergency_halt(void) {
 
 void i2c_comm_setup(void) {
   // Initializes the I2C communication
-  i2c_init(i2c0, 100000);
+  i2c_init(i2c1, 100000);
 
   gpio_set_function(MOTOR_I2C_SCL_PIN, GPIO_FUNC_I2C);
   gpio_set_function(MOTOR_I2C_SDA_PIN, GPIO_FUNC_I2C);

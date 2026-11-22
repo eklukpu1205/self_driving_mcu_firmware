@@ -19,9 +19,10 @@ static const EncoderWheelConfig wheels[2] = {
 };
 
 #define TOF_ADDRESS 0x29
-#define TOF_I2C_BUS i2c1
-#define TOF_SDA_PIN 6
-#define TOF_SCL_PIN 7
+#define TOF_I2C_BUS i2c0   // Proton PCB: I2C0 -> J3
+#define TOF_SDA_PIN 4
+#define TOF_SCL_PIN 5
+#define TOF_XSHUT_PIN 14   // Proton PCB: J3 pin 6 (SHDN), must be high
 static bool tof_ready;
 
 // static bool tof_write_register(uint8_t reg, uint8_t value) {
@@ -156,6 +157,12 @@ static bool tof_ready;
 // }
 
 static bool tof_init(void) {
+    // Take the ToF out of shutdown (XSHUT/SHDN high)
+    gpio_init(TOF_XSHUT_PIN);
+    gpio_set_dir(TOF_XSHUT_PIN, GPIO_OUT);
+    gpio_put(TOF_XSHUT_PIN, 1);
+    sleep_ms(10);
+
     i2c_init(TOF_I2C_BUS, 100000);
 
     gpio_set_function(TOF_SDA_PIN, GPIO_FUNC_I2C);
@@ -166,7 +173,7 @@ static bool tof_init(void) {
     sleep_ms(50);
 
     // Driver performs sensor configuration and reference calibration.
-    return tofInit(1, TOF_ADDRESS, 1) != 0;
+    return tofInit(0, TOF_ADDRESS, 1) != 0;
 }
 
 // Configure only the MCU bus, not the board's motor mode or encoder polarity.

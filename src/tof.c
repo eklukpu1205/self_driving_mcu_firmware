@@ -140,8 +140,8 @@ int tofInit(int iChan, int iAddr, int bLongRange)
 static unsigned short readReg16(unsigned char ucAddr)
 {
 unsigned char ucTemp[2];
-    i2c_write_blocking(i2c1,i2cAddress,&ucAddr,1,true);
-    i2c_read_blocking(i2c1,i2cAddress,ucTemp,2,false);
+    i2c_write_blocking(i2c0,i2cAddress,&ucAddr,1,true);
+    i2c_read_blocking(i2c0,i2cAddress,ucTemp,2,false);
 	return (unsigned short)((ucTemp[0]<<8) + ucTemp[1]);
 } /* readReg16() */
 
@@ -151,16 +151,16 @@ unsigned char ucTemp[2];
 static unsigned char readReg(unsigned char ucAddr)
 {
 unsigned char ucTemp;
-    i2c_write_blocking(i2c1,i2cAddress,&ucAddr,1,true);
-    i2c_read_blocking(i2c1,i2cAddress,&ucTemp,1,false);
+    i2c_write_blocking(i2c0,i2cAddress,&ucAddr,1,true);
+    i2c_read_blocking(i2c0,i2cAddress,&ucTemp,1,false);
 
 	return ucTemp;
 } /* ReadReg() */
 
 static void readMulti(unsigned char ucAddr, unsigned char *pBuf, int iCount)
 {
-   i2c_write_blocking(i2c1,i2cAddress,&ucAddr,1,true);
-   i2c_read_blocking(i2c1,i2cAddress,pBuf,iCount,false);
+   i2c_write_blocking(i2c0,i2cAddress,&ucAddr,1,true);
+   i2c_read_blocking(i2c0,i2cAddress,pBuf,iCount,false);
 } /* readMulti() */
 
 
@@ -171,7 +171,7 @@ int rc;
 
 	ucTemp[0] = ucAddr;
 	memcpy(&ucTemp[1], pBuf, iCount);
-   i2c_write_blocking(i2c1,i2cAddress,ucTemp,iCount+1,false);
+   i2c_write_blocking(i2c0,i2cAddress,ucTemp,iCount+1,false);
 } /* writeMulti() */
 //
 // Write a 16-bit value to a register
@@ -184,7 +184,7 @@ int rc;
 	ucTemp[0] = ucAddr;
 	ucTemp[1] = (unsigned char)(usValue >> 8); // MSB first
 	ucTemp[2] = (unsigned char)usValue;
-   i2c_write_blocking(i2c1,i2cAddress,ucTemp,3,false);
+   i2c_write_blocking(i2c0,i2cAddress,ucTemp,3,false);
 
 } /* writeReg16() */
 //
@@ -197,7 +197,7 @@ int rc;
 
 	ucTemp[0] = ucAddr;
 	ucTemp[1] = ucValue;
-   i2c_write_blocking(i2c1,i2cAddress,ucTemp,2,false);
+   i2c_write_blocking(i2c0,i2cAddress,ucTemp,2,false);
 
 } /* writeReg() */
 
@@ -210,7 +210,7 @@ unsigned char ucCount = *ucList++; // count is the first element in the list
 int rc;
 	while (ucCount)
 	{
-       i2c_write_blocking(i2c1,i2cAddress,ucList,2,false);
+       i2c_write_blocking(i2c0,i2cAddress,ucList,2,false);
 		ucList += 2;
 		ucCount--;
 	}

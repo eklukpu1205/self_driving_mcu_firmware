@@ -2,6 +2,9 @@
 #include "hardware/spi.h"
 #include "hardware/i2c.h"
 #include "hardware/timer.h"
+#include "hardware/clocks.h"
+#include "hardware/ticks.h"
+#include "hardware/resets.h"
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -19,17 +22,23 @@
 #define LOOP_PERIOD_US 20000 // 50 Hz
 #define COMMAND_TIMEOUT_US 250000u
 
+// SPI link debug counters (printed once per second)
+static uint32_t spi_valid_packets = 0;
+static uint32_t spi_bad_packets = 0;
+static uint8_t spi_raw_hist[10];      // last 10 raw bytes received (debug)
+static uint32_t spi_raw_idx = 0;
+
 // Flag set by the 50 Hz hardware timer interrupt
 static volatile bool tick_50hz = false;
 
-// Query the motor type from the Hiwonder motor board on i2c0 (addr 0x34, reg 0x14)
+// Query the motor type from the Hiwonder motor board on i2c1 (addr 0x34, reg 0x14)
 static int query_motor_type(uint8_t *type_out) {
     uint8_t reg = MOTOR_TYPE_ADDR;
-    if (i2c_write_timeout_us(i2c0, HI_WONDER_I2C_ADDR, &reg, 1, true, 5000) != 1) {
+    if (i2c_write_timeout_us(i2c1, HI_WONDER_I2C_ADDR, &reg, 1, true, 5000) != 1) {
         return -1;
     }
     uint8_t val = 0xFF;
-    if (i2c_read_timeout_us(i2c0, HI_WONDER_I2C_ADDR, &val, 1, false, 5000) != 1) {
+    if (i2c_read_timeout_us(i2c1, HI_WONDER_I2C_ADDR, &val, 1, false, 5000) != 1) {
         return -2;
     }
     if (type_out) {
@@ -46,6 +55,24 @@ static bool timer_50hz_callback(struct repeating_timer *t) {
 }
 
 int main(void) {
+    // --- Temporary (Proton board 1): Y1 crystal not working, run on ROSC ---
+    // Needs in platformio.ini build_flags:
+    //   -DPICO_RUNTIME_SKIP_INIT_CLOCKS=1 -DPICO_RUNTIME_SKIP_INIT_POST_CLOCK_RESETS=1
+    // Boot ROM leaves clk_sys = ROSC (~45.5 MHz), clk_ref = ROSC/4 (~11.4 MHz).
+    // Remove this block (and the build_flags) once Y1 is fixed.
+    clock_set_reported_hz(clk_ref, 11380000);
+    clock_set_reported_hz(clk_sys, 45530000);
+    clock_configure_undivided(clk_peri, 0, CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLK_SYS, 45530000);
+    tick_start(TICK_TIMER0, 11);
+    unreset_block_mask_wait_blocking(
+        RESETS_RESET_IO_BANK0_BITS | RESETS_RESET_PADS_BANK0_BITS |
+        RESETS_RESET_TIMER0_BITS   | RESETS_RESET_I2C0_BITS |
+        RESETS_RESET_I2C1_BITS     | RESETS_RESET_SPI0_BITS |
+        RESETS_RESET_SPI1_BITS     | RESETS_RESET_PWM_BITS  |
+        RESETS_RESET_UART0_BITS    | RESETS_RESET_UART1_BITS |
+        RESETS_RESET_PIO0_BITS     | RESETS_RESET_PIO1_BITS |
+        RESETS_RESET_DMA_BITS);
+
     stdio_init_all();
     // Allow brief time for USB serial/clocks to stabilize
     sleep_ms(250);
@@ -53,14 +80,14 @@ int main(void) {
     // Initialize actuators (PWM servo and motor I2C driver) to safe neutral/halt state
     actuator_hal_init();
 
-    // Query and verify motor type at startup from i2c0 (HI_WONDER_I2C_ADDR)
+    // Query and verify motor type at startup from i2c1 (HI_WONDER_I2C_ADDR)
     uint8_t startup_motor_type = 0xFF;
     int err = query_motor_type(&startup_motor_type);
     if (err == 0) {
-        printf("[Main]: Motor type initialized on i2c0 (addr 0x%02X, reg 0x%02X): %u\n",
+        printf("[Main]: Motor type initialized on i2c1 (addr 0x%02X, reg 0x%02X): %u\n",
                HI_WONDER_I2C_ADDR, MOTOR_TYPE_ADDR, startup_motor_type);
     } else {
-        printf("[Main]: Failed to read initial motor type from i2c0 (err=%d)\n", err);
+        printf("[Main]: Failed to read initial motor type from i2c1 (err=%d)\n", err);
     }
 
     // Initialize sensors (encoders and ToF)
@@ -89,6 +116,7 @@ int main(void) {
         // Read bytes from the ring buffer populated by SPI1_IRQ
         uint8_t b;
         while (comms_spi_read_byte(&b)) {
+            spi_raw_hist[spi_raw_idx++ % 10u] = b;
             frame[used++] = b;
             
             // Framing synchronization state machine:
@@ -114,12 +142,14 @@ int main(void) {
             else if (used == SPI_CMD_BYTES) {
                 SpiCommand cmd;
                 if (spi_command_decode(frame, &cmd)) {
+                    ++spi_valid_packets;
                     latest_cmd = cmd;
                     have_command = true;
                     last_valid_us = time_us_64();
                     command_timeout = false;
                     used = 0;
                 } else {
+                    ++spi_bad_packets;
                     // Frame validation failed (CRC mismatch or out-of-range value).
                     // Slide forward searching for the next 0x5A to regain sync.
                     size_t next_sync = 1;
@@ -175,6 +205,20 @@ int main(void) {
 
             // Query motor type periodically during execution (every 50 ticks = 1 Hz)
             static uint32_t motor_type_query_count = 0;
+            if (motor_type_query_count % 50 == 49) {
+                printf("[SPI] rx_bytes=%lu valid=%lu bad=%lu hw_ovr=%lu ring_ovr=%lu | seq=%u effort=%d steer=%d brake=%u%s\n",
+                       (unsigned long)comms_spi_rx_byte_count(),
+                       (unsigned long)spi_valid_packets, (unsigned long)spi_bad_packets,
+                       (unsigned long)comms_spi_hw_overrun_count(),
+                       (unsigned long)comms_spi_ring_overrun_count(),
+                       latest_cmd.sequence, latest_cmd.target_motor_effort,
+                       latest_cmd.target_steering_pulse_us, latest_cmd.emergency_brake,
+                       command_timeout ? "  (TIMEOUT: no valid packet in 250 ms)" : "");
+                printf("[SPI] last raw bytes:");
+                for (unsigned k = 0; k < 10u; ++k)
+                    printf(" %02X", spi_raw_hist[(spi_raw_idx + k) % 10u]);
+                printf("\n");
+            }
             if (++motor_type_query_count % 50 == 0) {
                 uint8_t exec_motor_type = 0xFF;
                 if (query_motor_type(&exec_motor_type) == 0) {

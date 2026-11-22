@@ -1,10 +1,10 @@
 #pragma once
 
-// User-confirmed prototype wiring: SDA=GPIO4, SCL=GPIO5, board address=0x34.
+// Proton PCB wiring: SDA=GPIO6, SCL=GPIO7 (I2C1, J5), board address=0x34.
 #define ENCODER_ENABLED 1
-#define ENCODER_I2C_BUS i2c0
-#define ENCODER_SDA_PIN 4u
-#define ENCODER_SCL_PIN 5u
+#define ENCODER_I2C_BUS i2c1   // Proton PCB: I2C1 -> J5
+#define ENCODER_SDA_PIN 6u
+#define ENCODER_SCL_PIN 7u
 // Initial host-side choices, not claimed board specifications.
 #define ENCODER_I2C_BAUDRATE 100000u
 #define ENCODER_TRANSFER_TIMEOUT_US 3000u
